@@ -23,6 +23,12 @@ import argparse
 from datetime import datetime, timezone
 from pymavlink import mavutil
 
+# Auto-configure the frozen GCS static IP (192.168.2.1/24) on the USB Ethernet adapter
+try:
+    from network_setup import ensure_gcs_ip, mavlink_connection_string, MAVLINK_CONN
+except ImportError:
+    from src.utils.network_setup import ensure_gcs_ip, mavlink_connection_string, MAVLINK_CONN
+
 
 def mavlink_to_dict(msg):
     """
@@ -160,7 +166,11 @@ def connect_and_listen(port, baud_rate, output_path=None, fmt="jsonl", print_std
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Connect to a MAVLink device, parse messages to JSON, and save logs.")
-    parser.add_argument("--port", type=str, default="udpin:0.0.0.0:14550", help="Connection string (e.g. udpin:0.0.0.0:14550 or /dev/ttyUSB0)")
+    parser.add_argument("--port", type=str, default=None,
+                        help="MAVLink connection string (default: udpin:0.0.0.0:14550). "
+                             "Overrides the auto-detected value.")
+    parser.add_argument("--no-ip-setup", action="store_true",
+                        help="Skip automatic static IP configuration on the USB Ethernet adapter.")
     parser.add_argument("--baud", type=int, default=57600, help="Baud rate for serial connections")
     parser.add_argument("--output", "-o", type=str, default=None, help="Output file path to save JSON logs (e.g. log.json or log.jsonl)")
     parser.add_argument("--format", "-f", type=str, choices=["jsonl", "json", "raw"], default="jsonl", help="Output format: 'jsonl' (line-by-line streaming) or 'json' (JSON array)")
@@ -169,11 +179,23 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # --- Network setup: assign frozen GCS IP 192.168.2.1/24 ---
+    if not args.no_ip_setup:
+        ok = ensure_gcs_ip(auto=True)
+        if not ok:
+            print("[WARNING] Could not configure the static IP automatically. "
+                  "MAVLink telemetry may not be received.")
+    else:
+        print("[network_setup] Skipping IP setup (--no-ip-setup flag set).")
+
+    # Resolve connection string: CLI flag > auto default
+    port = args.port if args.port else mavlink_connection_string()
+
     msg_types_list = args.types.split(",") if args.types else None
     print_stdout = not args.quiet
 
     connect_and_listen(
-        port=args.port,
+        port=port,
         baud_rate=args.baud,
         output_path=args.output,
         fmt=args.format,

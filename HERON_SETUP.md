@@ -64,26 +64,55 @@ sudo networksetup -setmanual "USB 10/100/1000 LAN" 192.168.2.1 255.255.255.0
 
 ---
 
+### Automatic Setup via Script (`src/utils/network_setup.py`)
+
+Instead of running the OS-specific commands above manually, the Python scripts
+(`mavlink_connect.py` and `controller_teleop.py`) will **automatically detect
+your OS and assign the static IP at startup**.
+
+You can also run the setup standalone to verify or pre-configure the interface:
+
+```bash
+# Auto-detect OS & assign 192.168.2.1/24 (requires sudo password prompt)
+uv run src/utils/network_setup.py
+
+# Dry-run: print commands without executing
+uv run src/utils/network_setup.py --dry-run
+```
+
+> **Note**: The frozen GCS IP is `192.168.2.1`. This is hardcoded in
+> `src/utils/network_setup.py` and used by all scripts automatically.
+
+---
+
 ## 3. Python Setup & Dependencies
 
 The project uses `uv` for dependency management:
 
 ```bash
 # Install dependencies
-uv add pymavlink pyserial evdev
+uv add pymavlink pyserial inputs
 ```
 
 ---
 
 ## 4. Telemetry & Teleoperation Scripts
 
+> **Auto IP setup**: Both scripts below automatically detect whether you are on
+> **Linux** or **macOS** and assign the frozen static IP **`192.168.2.1/24`**
+> to your USB Ethernet adapter before connecting. A `sudo` password prompt may
+> appear. Use `--no-ip-setup` to skip this if the IP is already configured.
+
 ### 4.1 Telemetry Monitoring Script (`src/utils/mavlink_connect.py`)
 
 Listens for incoming MAVLink telemetry streams and prints live system status:
 
 ```bash
-# Run telemetry listener
+# Run telemetry listener (auto-configures 192.168.2.1 on USB Ethernet at startup)
 uv run src/utils/mavlink_connect.py
+
+# Skip automatic IP setup (IP already configured)
+uv run src/utils/mavlink_connect.py --no-ip-setup
 ```
 
 ### 4.2 Logitech Controller Teleoperation (`src/utils/controller_teleop.py`)
@@ -91,11 +120,14 @@ uv run src/utils/mavlink_connect.py
 Teleoperates the Heron surface vehicle thrusters using a Logitech gamepad / joystick:
 
 ```bash
-# Run controller teleoperation
+# Run controller teleoperation (auto-configures 192.168.2.1 on USB Ethernet at startup)
 uv run src/utils/controller_teleop.py
 
 # Optional: Specify input device explicitly if multiple joysticks are connected
 uv run src/utils/controller_teleop.py --device /dev/input/event21
+
+# Skip automatic IP setup (IP already configured)
+uv run src/utils/controller_teleop.py --no-ip-setup
 ```
 
 #### Controller Controls Mapping:
