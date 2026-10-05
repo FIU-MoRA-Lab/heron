@@ -20,14 +20,21 @@ Keyboard controls (always active inside the TUI):
     q / Ctrl-C  Quit
 
 Run:
-    uv run src/utils/controller_teleop.py [--keyboard] [--no-ip-setup]
+    uv run src/mission/controller_teleop.py [--keyboard] [--no-ip-setup]
 """
 
 import sys
 import time
 import threading
 import argparse
+from pathlib import Path
 from pymavlink import mavutil
+
+# Ensure src/ is on sys.path so internal modules resolve when running via
+# `uv run src/mission/controller_teleop.py` from the project root.
+_SRC = Path(__file__).resolve().parent.parent
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -36,15 +43,8 @@ from textual.reactive import reactive
 from textual.widgets import Footer, Static, RichLog, Label
 from rich.text import Text
 
-try:
-    from mavlink_connect import MAVLinkLogger
-except ImportError:
-    from src.utils.mavlink_connect import MAVLinkLogger
-
-try:
-    from network_setup import ensure_gcs_ip, mavlink_connection_string
-except ImportError:
-    from src.utils.network_setup import ensure_gcs_ip, mavlink_connection_string
+from utils.logger import HeronLogger
+from utils.network_setup import ensure_gcs_ip, mavlink_connection_string
 
 try:
     import inputs as inputs_lib
@@ -171,10 +171,9 @@ class HeronTUIApp(App):
         color: #58a6ff;
         text-align: center;
         content-align: center middle;
-        height: 3;
+        height: 1;
         text-style: bold;
-        border: tall #30363d;
-        margin: 0 0 0 0;
+        margin: 0;
     }
 
     /* ── Status row ── */
@@ -189,7 +188,7 @@ class HeronTUIApp(App):
 
     ArmStatusWidget {
         height: 1;
-        margin: 1 0;
+        margin: 0;
     }
 
     /* ── Axis bars ── */
@@ -197,13 +196,13 @@ class HeronTUIApp(App):
         background: #161b22;
         border: tall #30363d;
         height: 4;
-        padding: 0;
+        padding: 0 1;
         margin: 0;
     }
 
     AxisBarWidget {
         height: 1;
-        margin: 1 0 0 0;
+        margin: 0;
     }
 
     /* ── FCU panel ── */
@@ -211,12 +210,12 @@ class HeronTUIApp(App):
         background: #161b22;
         border: tall #30363d;
         height: 4;
-        padding: 0;
+        padding: 0 1;
         margin: 0;
     }
 
     FCUWidget {
-        height: 3;
+        height: 2;
         margin: 0;
     }
 
@@ -268,7 +267,7 @@ class HeronTUIApp(App):
         self.teleop = teleop
 
     def compose(self) -> ComposeResult:
-        yield Static("🚤  HERON USV  ·  MAVLink Teleoperation", id="title")
+        yield Static("HERON USV  ·  MAVLink Teleoperation", id="title")
 
         with Container(id="status-panel"):
             yield ArmStatusWidget(id="arm-status")
@@ -323,7 +322,7 @@ class HeronTUIApp(App):
 
     def action_stop(self) -> None:
         self.teleop.emergency_stop()
-        self.teleop._enqueue_log("[bold yellow]⚠  EMERGENCY STOP — throttle & yaw zeroed[/]")
+        self.teleop._enqueue_log("[bold yellow][STOP] EMERGENCY STOP — throttle & yaw zeroed[/]")
 
     def action_arm(self)        -> None: self.teleop.arm()
     def action_disarm(self)     -> None: self.teleop.disarm()
@@ -348,8 +347,6 @@ class HeronTeleop:
     def __init__(self, port: str, baud: int, log_file=None, log_fmt="jsonl"):
         self.port     = port
         self.baud     = baud
-        self.log_file = log_file
-        self.log_fmt  = log_fmt
 
         # Shared state (read by UI, written by background thread + UI actions)
         self.throttle   = 0
@@ -363,7 +360,16 @@ class HeronTeleop:
 
         self._log_queue: list[str] = []
         self._last_arm_cmd = 0.0
-        self.logger = MAVLinkLogger(output_path=log_file, fmt=log_fmt, print_stdout=False)
+
+        # Logger is always-on: auto-generates a timestamped log in ~/heron_logs/
+        # unless the caller provides an explicit output path.
+        self.logger = HeronLogger(
+            output_path   = log_file,
+            fmt           = log_fmt,
+            print_stdout  = False,
+            auto_path     = log_file is None,
+            session_label = "controller",
+        )
 
     def _enqueue_log(self, msg: str) -> None:
         self._log_queue.append(msg)
@@ -419,6 +425,8 @@ class HeronTeleop:
 
     def run_in_thread(self) -> None:
         """Connect and stream commands. Runs in a daemon thread."""
+        # Open logger at thread start (always-on)
+        self.logger.open()
         try:
             self.conn_str = f"Connecting to {self.port}…"
             self.master   = mavutil.mavlink_connection(self.port, baud=self.baud)
@@ -428,10 +436,7 @@ class HeronTeleop:
             self.target_system    = self.master.target_system
             self.target_component = self.master.target_component
             self.conn_str = f"Connected · SYS {self.target_system}"
-            self._enqueue_log(f"[bold cyan]✓ Heartbeat from system {self.target_system}[/]")
-
-            if self.log_file:
-                self.logger.open()
+            self._enqueue_log(f"[bold cyan][OK] Heartbeat from system {self.target_system}[/]")
 
             interval = 1.0 / STREAM_HZ
             while self.running:
@@ -442,8 +447,7 @@ class HeronTeleop:
                     msg = self.master.recv_match(blocking=False)
                     if not msg:
                         break
-                    if self.log_file:
-                        self.logger.log_message(msg)
+                    self.logger.log_message(msg)
                     mt = msg.get_type()
                     if mt == "SERVO_OUTPUT_RAW":
                         self.servo1_raw = getattr(msg, "servo1_raw", 0)
@@ -491,11 +495,11 @@ class HeronTeleop:
                 time.sleep(max(0, interval - elapsed))
 
         except Exception as exc:
-            self._enqueue_log(f"[bold red]✗ MAVLink error: {exc}[/]")
+            self._enqueue_log(f"[bold red][ERROR] MAVLink error: {exc}[/]")
             self.conn_str = f"Error: {exc}"
         finally:
-            if self.log_file:
-                self.logger.close()
+            # Always close logger gracefully on thread exit
+            self.logger.close()
             try:
                 self.master.close()
             except Exception:

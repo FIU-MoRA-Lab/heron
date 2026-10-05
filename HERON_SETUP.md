@@ -67,7 +67,7 @@ sudo networksetup -setmanual "USB 10/100/1000 LAN" 192.168.2.1 255.255.255.0
 ### Automatic Setup via Script (`src/utils/network_setup.py`)
 
 Instead of running the OS-specific commands above manually, the Python scripts
-(`mavlink_connect.py` and `controller_teleop.py`) will **automatically detect
+(`logger.py`, `controller_teleop.py`, and `waypoint_teleop.py`) will **automatically detect
 your OS and assign the static IP at startup**.
 
 You can also run the setup standalone to verify or pre-configure the interface:
@@ -103,31 +103,42 @@ uv add pymavlink pyserial inputs
 > to your USB Ethernet adapter before connecting. A `sudo` password prompt may
 > appear. Use `--no-ip-setup` to skip this if the IP is already configured.
 
-### 4.1 Telemetry Monitoring Script (`src/utils/mavlink_connect.py`)
+### 4.1 Telemetry Logger (`src/utils/logger.py`)
 
-Listens for incoming MAVLink telemetry streams and prints live system status:
+Listens for incoming MAVLink telemetry and logs every session to a timestamped
+JSONL file in `~/heron_logs/` automatically. Also prints live output when
+`--stdout` is passed.
 
 ```bash
-# Run telemetry listener (auto-configures 192.168.2.1 on USB Ethernet at startup)
-uv run src/utils/mavlink_connect.py
+# Run standalone telemetry logger (auto-configures 192.168.2.1 on USB Ethernet)
+uv run src/utils/logger.py
+
+# Also print messages to the terminal
+uv run src/utils/logger.py --stdout
+
+# Save to a specific file instead of the auto-generated timestamped name
+uv run src/utils/logger.py --output my_log.jsonl
 
 # Skip automatic IP setup (IP already configured)
-uv run src/utils/mavlink_connect.py --no-ip-setup
+uv run src/utils/logger.py --no-ip-setup
 ```
 
-### 4.2 Logitech Controller Teleoperation (`src/utils/controller_teleop.py`)
+> **Note**: `src/mission/controller_teleop.py` and `src/mission/waypoint_teleop.py` both
+> start the logger automatically on every run — no flags needed. Logs land in `~/heron_logs/`.
+
+### 4.2 Logitech Controller Teleoperation (`src/mission/controller_teleop.py`)
 
 Teleoperates the Heron surface vehicle thrusters using a Logitech gamepad / joystick:
 
 ```bash
 # Run controller teleoperation (auto-configures 192.168.2.1 on USB Ethernet at startup)
-uv run src/utils/controller_teleop.py
+uv run src/mission/controller_teleop.py
 
 # Optional: Specify input device explicitly if multiple joysticks are connected
-uv run src/utils/controller_teleop.py --device /dev/input/event21
+uv run src/mission/controller_teleop.py --device /dev/input/event21
 
 # Skip automatic IP setup (IP already configured)
-uv run src/utils/controller_teleop.py --no-ip-setup
+uv run src/mission/controller_teleop.py --no-ip-setup
 ```
 
 #### Controller Controls Mapping:
@@ -135,6 +146,37 @@ uv run src/utils/controller_teleop.py --no-ip-setup
 - **Right Stick / Left Stick (Horizontal)**: Steering / Yaw turning
 - **Button 1 (A / Trigger)**: Toggle ARM / DISARM
 - **Button 2 (B / Thumb)**: Set Vehicle Mode to MANUAL
+
+### 4.3 Satellite Feed & Waypoint Navigation (`src/mission/waypoint_teleop.py`)
+
+Interactive Ground Control Station with live satellite imagery map, mouse click waypoint planning, and emergency manual override:
+
+```bash
+# Launch Satellite Map Ground Control Station
+uv run src/mission/waypoint_teleop.py
+
+# Launch with pre-loaded waypoints file (JSON or CSV)
+uv run src/mission/waypoint_teleop.py --waypoints src/examples/waypoints/waypoints_sample.json
+
+# Launch with dual Textual TUI dashboard + Satellite Map window
+uv run src/mission/waypoint_teleop.py --tui --waypoints src/examples/waypoints/waypoints_sample.json
+```
+
+#### Map & Teleop Controls:
+- **Click / Tap Map**: Drop new waypoint `(lat, lon)` on satellite view.
+- **Click & Drag Waypoint**: Move existing waypoint position.
+- **Shift + Click / Alt + Click / Right-Click**: Delete waypoint (easy touchpad shortcut!).
+- **Trackpad Pinch / Two-finger Scroll / `+`/`-`**: **Google Maps style cursor-centered zoom** (keeps cursor position anchored while zooming).
+- **On-screen `[+]` / `[-]` & `[🎯 Center]` Buttons**: Quick zoom and re-center controls on map overlay.
+- **Key `V` / `R`**: 📡 **Lock & Re-Center Map on Vehicle Live GPS Feed** (follows vehicle coordinates in real-time).
+- **Key `G`**: 🧪 **Set Test GPS Position** (useful when testing indoors before 3D GPS lock is acquired).
+- **Key `U`**: Upload Waypoint Mission to ArduRover FCU via MAVLink and trigger `AUTO` mode.
+- **Key `L` / `S`**: Load / Save waypoints from/to JSON or CSV files (`lat,lon,alt`).
+- **Key `C`**: Clear all waypoints.
+- **Key `M`**: Set MANUAL mode.
+- **Key `A` / `D`**: ARM / DISARM vehicle.
+- **SPACEBAR**: 🚨 **EMERGENCY STOP** (Instantly aborts auto navigation, sets MANUAL mode, and zeroes thrusters).
+- **Arrow Keys / WASD**: Immediate manual control override.
 
 ---
 
