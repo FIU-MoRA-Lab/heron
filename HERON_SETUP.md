@@ -1,0 +1,124 @@
+# Heron Surface Vehicle MAVLink Connection Guide
+
+This guide details the network topology, system configuration (for Linux and macOS), and Python script setup required to connect to and teleoperate the Heron Surface Vehicle using `pymavlink` and a Logitech Gamepad/Joystick.
+
+---
+
+## 1. System & Network Architecture
+
+- **Ground Control Computer IP**: `192.168.2.1 / 24` (Static IP required on USB Ethernet Adapter)
+- **MikroTik Wireless Antenna Bridge**: `192.168.2.11` (Ground) / `192.168.2.12` (Vehicle)
+- **Vehicle Companion Computer (Raspberry Pi)**: `192.168.2.2`
+- **MAVLink Stream**: `mavlink-routerd` on the companion computer routes telemetry output to UDP target `192.168.2.1:14550`.
+
+---
+
+## 2. Host Network Setup
+
+### Linux Setup
+
+Identify your USB Ethernet interface name using `ip a` (e.g., `enx207bd2bd7e8f` or `eth1`), then run:
+
+```bash
+# 1. Flush existing IP configurations on the adapter
+sudo ip addr flush dev enx207bd2bd7e8f
+
+# 2. Assign static IP 192.168.2.1 with netmask 255.255.255.0 (/24)
+sudo ip addr add 192.168.2.1/24 dev enx207bd2bd7e8f
+
+# 3. Bring interface up
+sudo ip link set enx207bd2bd7e8f up
+```
+
+---
+
+### macOS Setup
+
+#### Option A: Terminal (`ifconfig`)
+Find your network interface name using `ifconfig` (e.g., `en5` or `en7`), then run:
+
+```bash
+# 1. Set static IP 192.168.2.1 and subnet mask 255.255.255.0
+sudo ifconfig enX 192.168.2.1 netmask 255.255.255.0 up
+```
+
+#### Option B: Terminal (`networksetup`)
+```bash
+# 1. List network services to find the USB adapter name (e.g., "USB 10/100/1000 LAN")
+networksetup -listallnetworkservices
+
+# 2. Assign static IP using the service name
+sudo networksetup -setmanual "USB 10/100/1000 LAN" 192.168.2.1 255.255.255.0
+```
+
+#### Option C: macOS GUI (System Settings)
+1. Open **System Settings** > **Network**.
+2. Select your **USB Ethernet Adapter**.
+3. Click **Details...** > **TCP/IP**.
+4. Change **Configure IPv4** to **Manually**.
+5. Set:
+   - **IP Address**: `192.168.2.1`
+   - **Subnet Mask**: `255.255.255.0`
+   - **Router**: *(Leave blank)*
+6. Click **OK** and **Apply**.
+
+---
+
+## 3. Python Setup & Dependencies
+
+The project uses `uv` for dependency management:
+
+```bash
+# Install dependencies
+uv add pymavlink pyserial evdev
+```
+
+---
+
+## 4. Telemetry & Teleoperation Scripts
+
+### 4.1 Telemetry Monitoring Script (`src/utils/mavlink_connect.py`)
+
+Listens for incoming MAVLink telemetry streams and prints live system status:
+
+```bash
+# Run telemetry listener
+uv run src/utils/mavlink_connect.py
+```
+
+### 4.2 Logitech Controller Teleoperation (`src/utils/controller_teleop.py`)
+
+Teleoperates the Heron surface vehicle thrusters using a Logitech gamepad / joystick:
+
+```bash
+# Run controller teleoperation
+uv run src/utils/controller_teleop.py
+
+# Optional: Specify input device explicitly if multiple joysticks are connected
+uv run src/utils/controller_teleop.py --device /dev/input/event21
+```
+
+#### Controller Controls Mapping:
+- **Left Stick (Vertical)**: Throttle (Forward / Reverse)
+- **Right Stick / Left Stick (Horizontal)**: Steering / Yaw turning
+- **Button 1 (A / Trigger)**: Toggle ARM / DISARM
+- **Button 2 (B / Thumb)**: Set Vehicle Mode to MANUAL
+
+---
+
+## 5. Verification & Troubleshooting
+
+1. **Ping Ground Antenna**:
+   ```bash
+   ping 192.168.2.11
+   ```
+
+2. **Ping Vehicle Companion Computer**:
+   ```bash
+   ping 192.168.2.2
+   ```
+
+3. **Check Gamepad Device Detection**:
+   ```bash
+   ls -l /dev/input/js* /dev/input/event*
+   ```

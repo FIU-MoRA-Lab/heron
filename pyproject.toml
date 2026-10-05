@@ -1,0 +1,11 @@
+[project]
+name = "heron"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "evdev>=2.0.0",
+    "pymavlink>=2.4.50",
+    "pyserial>=3.5",
+]
