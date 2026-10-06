@@ -14,7 +14,6 @@ Usage (standalone verification):
     uv run heron-network-setup --dry-run
 """
 
-import re
 import sys
 import platform
 import pathlib
@@ -124,37 +123,51 @@ def _macos_ethernet_candidates():
     return [(dev, service) for dev, service in candidates if _iface_is_active(dev)]
 
 
-def _arp_entry_is_resolved(output: str, host: str) -> bool:
-    """Return True when macOS `arp` shows a MAC address for *host*."""
-    for line in output.splitlines():
-        if host in line and " at " in line and "incomplete" not in line.lower():
-            if re.search(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", line):
-                return True
-    return False
-
-
 def _find_mikrotik_macos():
-    """Find the unique Ethernet service whose ARP cache learns the MikroTik."""
+    """Find the unique Ethernet service that receives an ARP reply from MikroTik."""
     candidates = _macos_ethernet_candidates()
     if not candidates:
+        print("[network_setup] No active physical Ethernet interfaces were found.")
         return None, None
+    arping = shutil.which("arping")
+    if not arping:
+        print("[network_setup] ERROR: `arping` is required for macOS antenna discovery.")
+        print("                Install it with Homebrew: brew install arping")
+        return None, None
+    print(f"[network_setup] Probing {len(candidates)} active Ethernet interface(s) with {arping}.")
 
-    # macOS has no built-in arping. Clear only this neighbor on each interface,
-    # send one interface-bound ICMP request to trigger ARP, and decide solely
-    # from that interface's ARP entry. A bridge need not answer ICMP.
+    # Probe each active Ethernet interface directly at layer 2. This works
+    # before assigning an IP and avoids changing any interface until the
+    # antenna has been uniquely identified.
     try:
         _run(["sudo", "-v"], check=True, capture=False)
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(f"[network_setup] ERROR: Could not authorize ARP discovery: {exc}")
         return None, None
 
     matches = []
     for dev, service in candidates:
-        _run(["sudo", "-n", "arp", "-d", ANTENNA_GND, "ifscope", dev])
-        _run(["ping", "-b", dev, "-c", "1", "-W", "1000", ANTENNA_GND])
-        neighbor = _run(["arp", "-n", "-i", dev, ANTENNA_GND])
-        if _arp_entry_is_resolved(neighbor.stdout, ANTENNA_GND):
+        try:
+            # Homebrew's arping (ThomasHabets) uses lowercase -i for the
+            # interface selector; Linux iputils arping uses uppercase -I.
+            probe = _run([
+                "sudo", "-n", arping,
+                "-i", dev,
+                "-S", GCS_IP,
+                "-c", "3",
+                ANTENNA_GND,
+            ])
+        except OSError as exc:
+            print(f"[network_setup] ERROR: Could not run arping on {dev}: {exc}")
+            continue
+        if probe.returncode == 0:
             matches.append((dev, service))
             print(f"[network_setup] ARP reply from {ANTENNA_GND} on {dev}.")
+        else:
+            detail = " ".join(part.strip() for part in (probe.stdout, probe.stderr) if part.strip())
+            print(f"[network_setup] No ARP reply on {dev} (arping exit {probe.returncode}).")
+            if detail:
+                print(f"                {detail}")
     return matches[0] if len(matches) == 1 else (None, None)
 
 

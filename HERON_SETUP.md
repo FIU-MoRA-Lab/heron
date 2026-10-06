@@ -17,7 +17,7 @@ This guide details the network topology, system configuration (for Linux and mac
 
 ### Linux Setup
 
-Automatic setup probes every live Ethernet interface for the ground MikroTik at `192.168.2.11` and uses the unique interface that answers at the ARP layer. The antenna may not answer ICMP ping. Linux uses `arping` from `iputils-arping`; macOS uses its built-in `ping` only to populate the interface-scoped ARP cache and checks that cache for the antenna's MAC address. An ICMP echo reply is not required.
+Automatic setup probes every live Ethernet interface for the ground MikroTik at `192.168.2.11` and uses the unique interface that answers at the ARP layer. The antenna may not answer ICMP ping. Linux uses `arping` from `iputils-arping`; macOS uses `arping` installed with Homebrew (`brew install arping`). No Ethernet interface is reconfigured unless it uniquely receives the antenna's ARP reply.
 
 If you configure the connection manually, identify the interface connected to the MikroTik and run:
 
@@ -69,11 +69,11 @@ Instead of running the OS-specific commands above manually, the Python scripts
 (`logger.py`, `legacy/controller.py`, and `mission_control.py`) will **automatically detect
 your OS and assign the static IP at startup**.
 
-Automatic setup does not choose by adapter name. It probes each active Ethernet
-interface for the MikroTik bridge, then assigns `192.168.2.1/24` to the unique
-interface whose ARP table learns `192.168.2.11`. On Linux, install
-`iputils-arping` if `arping` is not already available. macOS uses built-in
-network tools and does not require a Homebrew package.
+Automatic setup does not choose by adapter name. It probes each active
+Ethernet interface for the MikroTik bridge and assigns `192.168.2.1/24` only
+to the unique interface that receives an ARP reply. On Linux, install
+`iputils-arping` if `arping` is not already available. On macOS, install
+`arping` with Homebrew if it is not already available: `brew install arping`.
 
 You can also run the setup standalone to verify or pre-configure the interface:
 
