@@ -30,7 +30,7 @@ from pymavlink import mavutil
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container
 from textual.reactive import reactive
 from textual.widgets import Footer, Static, RichLog, Label
 from rich.text import Text
@@ -539,7 +539,8 @@ def find_gamepad(name_filter: str = "Logitech"):
 
 
 def gamepad_thread(teleop: HeronTeleop, gp) -> None:
-    AXIS_MAP   = {"ABS_Y": ("throttle", True), "ABS_X": ("yaw", False), "ABS_RZ": ("yaw", False)}
+    # Left stick vertical controls throttle; right stick horizontal controls steering.
+    AXIS_MAP   = {"ABS_Y": ("throttle", True), "ABS_RX": ("yaw", False)}
     ARM_CODES  = {"BTN_SOUTH", "BTN_A", "BTN_TRIGGER"}
     DARM_CODES = {"BTN_NORTH", "BTN_X"}
     MODE_CODES = {"BTN_EAST",  "BTN_B"}

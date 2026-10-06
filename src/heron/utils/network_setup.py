@@ -42,14 +42,8 @@ def _run(cmd: list, check: bool = False, capture: bool = True) -> subprocess.Com
 # Interface discovery
 # ---------------------------------------------------------------------------
 
-def _find_usb_ethernet_linux():
-    """Find the unique Ethernet interface that can reach the ground MikroTik.
-
-    Interface names and the number of available NICs are not evidence that an
-    interface is connected to the antenna. Probe the antenna's MAC-level
-    presence on each carrier-up Ethernet interface and fail closed if the
-    result is ambiguous or cannot be established.
-    """
+def _linux_ethernet_candidates():
+    """List live physical Ethernet interfaces on Linux."""
     result = _run(["ip", "-o", "link", "show"])
     candidates = []
     for line in result.stdout.splitlines():
@@ -57,9 +51,8 @@ def _find_usb_ethernet_linux():
         if len(parts) < 2:
             continue
         name = parts[1].strip().split("@", 1)[0]
-        if name.startswith(("lo", "wl", "docker", "br-", "virbr", "veth", "tun", "tap", "wg")):
+        if name.startswith(("lo", "wl", "docker", "br-", "virbr", "veth", "tun", "tap", "wg", "tailscale")):
             continue
-        # Linux ARP probing is meaningful only on a live Ethernet link.
         try:
             iface_type = (pathlib.Path("/sys/class/net") / name / "type").read_text().strip()
             carrier = (pathlib.Path("/sys/class/net") / name / "carrier").read_text().strip()
@@ -67,21 +60,36 @@ def _find_usb_ethernet_linux():
             continue
         if iface_type == "1" and carrier == "1":
             candidates.append(name)
+    return candidates
 
+
+def _find_mikrotik_linux():
+    """Find the unique Ethernet interface that receives an ARP reply from the ground MikroTik."""
+    candidates = _linux_ethernet_candidates()
     arping = shutil.which("arping")
-    if not arping or not candidates:
+    if not candidates:
+        return None
+    if not arping:
+        print("[network_setup] ERROR: `arping` is required for Linux antenna discovery (install iputils-arping).")
         return None
 
-    responders = []
+    # iputils arping needs raw-socket privileges on systems without its
+    # optional file capability. Authenticate once, then probe non-interactively.
+    try:
+        _run(["sudo", "-v"], check=True, capture=False)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+    matches = []
     for iface in candidates:
         try:
-            probe = _run([arping, "-I", iface, "-c", "2", "-w", "3", ANTENNA_GND])
+            probe = _run(["sudo", "-n", arping, "-I", iface, "-c", "2", "-w", "3", ANTENNA_GND])
         except OSError:
-            return None
+            continue
         if probe.returncode == 0:
-            responders.append(iface)
-
-    return responders[0] if len(responders) == 1 else None
+            matches.append(iface)
+            print(f"[network_setup] ARP reply from {ANTENNA_GND} on {iface}.")
+    return matches[0] if len(matches) == 1 else None
 
 
 def _iface_is_active(iface: str) -> bool:
@@ -90,13 +98,8 @@ def _iface_is_active(iface: str) -> bool:
     return "status: active" in result.stdout
 
 
-def _find_usb_ethernet_macos():
-    """
-    Return the unique active Ethernet service that answers for the MikroTik.
-
-    Link activity and adapter naming alone cannot distinguish the antenna
-    from another wired network, so never fall back to an unverified adapter.
-    """
+def _macos_ethernet_candidates():
+    """List active physical Ethernet services on macOS."""
     result = _run(["networksetup", "-listallhardwareports"])
     lines = result.stdout.splitlines()
 
@@ -118,25 +121,41 @@ def _find_usb_ethernet_macos():
                     candidates.append((dev, port_name))
         i += 1
 
+    return [(dev, service) for dev, service in candidates if _iface_is_active(dev)]
+
+
+def _arp_entry_is_resolved(output: str, host: str) -> bool:
+    """Return True when macOS `arp` shows a MAC address for *host*."""
+    for line in output.splitlines():
+        if host in line and " at " in line and "incomplete" not in line.lower():
+            if re.search(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", line):
+                return True
+    return False
+
+
+def _find_mikrotik_macos():
+    """Find the unique Ethernet service whose ARP cache learns the MikroTik."""
+    candidates = _macos_ethernet_candidates()
     if not candidates:
         return None, None
 
-    arping = shutil.which("arping")
-    if not arping:
+    # macOS has no built-in arping. Clear only this neighbor on each interface,
+    # send one interface-bound ICMP request to trigger ARP, and decide solely
+    # from that interface's ARP entry. A bridge need not answer ICMP.
+    try:
+        _run(["sudo", "-v"], check=True, capture=False)
+    except (OSError, subprocess.CalledProcessError):
         return None, None
 
-    responders = []
+    matches = []
     for dev, service in candidates:
-        if not _iface_is_active(dev):
-            continue
-        try:
-            probe = _run([arping, "-I", dev, "-c", "2", "-w", "3", ANTENNA_GND])
-        except OSError:
-            return None, None
-        if probe.returncode == 0:
-            responders.append((dev, service))
-
-    return responders[0] if len(responders) == 1 else (None, None)
+        _run(["sudo", "-n", "arp", "-d", ANTENNA_GND, "ifscope", dev])
+        _run(["ping", "-b", dev, "-c", "1", "-W", "1000", ANTENNA_GND])
+        neighbor = _run(["arp", "-n", "-i", dev, ANTENNA_GND])
+        if _arp_entry_is_resolved(neighbor.stdout, ANTENNA_GND):
+            matches.append((dev, service))
+            print(f"[network_setup] ARP reply from {ANTENNA_GND} on {dev}.")
+    return matches[0] if len(matches) == 1 else (None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -185,10 +204,10 @@ def _current_ip_macos(iface: str, service_name: str = None):
 # ---------------------------------------------------------------------------
 
 def setup_linux(auto: bool = True) -> bool:
-    iface = _find_usb_ethernet_linux()
+    iface = _find_mikrotik_linux()
     if not iface:
-        print(f"[network_setup] ERROR: Could not identify a unique wired interface responding as the MikroTik antenna ({ANTENNA_GND}).")
-        print("                No network settings were changed. Check the Ethernet cable and install the arping utility.")
+        print(f"[network_setup] ERROR: No unique wired interface received an ARP reply from {ANTENNA_GND}.")
+        print("                Check the Ethernet cable, antenna power, and that only one computer port reaches this bridge.")
         return False
 
     print(f"[network_setup] Linux: detected wired interface → {iface}")
@@ -220,11 +239,10 @@ def setup_linux(auto: bool = True) -> bool:
 
 
 def setup_macos(auto: bool = True) -> bool:
-    iface, service = _find_usb_ethernet_macos()
+    iface, service = _find_mikrotik_macos()
     if not iface:
-        print(f"[network_setup] ERROR: Could not identify a unique Ethernet interface responding as the MikroTik antenna ({ANTENNA_GND}).")
-        print("                No network settings were changed. Check the cable and install arping (for example, `brew install arping`).")
-        print("                You can configure the verified antenna adapter manually via:")
+        print(f"[network_setup] ERROR: No unique Ethernet interface received an ARP reply from {ANTENNA_GND}.")
+        print("                Check the Ethernet link and antenna power, then try again.")
         print("                System Settings > Network > [adapter] > TCP/IP > Manual")
         return False
 
@@ -272,80 +290,20 @@ def setup_macos(auto: bool = True) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Connectivity verification
-# ---------------------------------------------------------------------------
-
-def _ping(host: str, timeout_sec: int = 2) -> float | None:
-    """
-    Send a single ICMP ping to *host* and return round-trip time in ms,
-    or None if unreachable / timed out.
-
-    Handles the flag difference between Linux (-W seconds) and macOS (-W ms).
-    """
-    os_name = platform.system()
-    if os_name == "Darwin":
-        # macOS: -W expects milliseconds
-        cmd = ["ping", "-c", "1", "-W", str(timeout_sec * 1000), host]
-    else:
-        # Linux (and fallback): -W expects seconds
-        cmd = ["ping", "-c", "1", "-W", str(timeout_sec), host]
-
-    result = _run(cmd)
-    if result.returncode != 0:
-        return None
-
-    # Parse "time=12.3 ms" from ping output
-    match = re.search(r"time[=<](\d+\.?\d*)\s*ms", result.stdout)
-    if match:
-        return float(match.group(1))
-    return 0.0  # reachable but couldn't parse time
-
-
-def verify_network_links() -> bool:
-    """
-    Ping the MikroTik ground antenna and the vehicle companion computer to
-    confirm the full RF link is up.
-
-    Returns:
-        True if both hops are reachable, False otherwise.
-    """
-    targets = [
-        (ANTENNA_GND, "MikroTik ground antenna"),
-        (VEHICLE_IP,  "vehicle companion computer (RPi)"),
-    ]
-
-    all_ok = True
-    for ip, label in targets:
-        rtt = _ping(ip)
-        if rtt is not None:
-            print(f"[network_setup] Ping {label} ({ip}) ... OK  ({rtt:.1f} ms)")
-        else:
-            print(f"[network_setup] Ping {label} ({ip}) ... FAILED")
-            all_ok = False
-
-    if not all_ok:
-        print("[network_setup] WARNING: One or more network hops are unreachable.")
-        print("                Check the USB cable, MikroTik bridge, and vehicle power.")
-
-    return all_ok
-
-
-# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 def ensure_gcs_ip(auto: bool = True) -> bool:
     """
-    Detect the host OS, assign the frozen GCS IP (192.168.2.1/24) on the
-    USB Ethernet adapter, then verify connectivity to the MikroTik antenna
-    and the vehicle companion computer.
+    Detect the host OS, find the interface that answers at the MikroTik
+    ground bridge IP using ARP, then assign the frozen GCS IP (192.168.2.1/24).
 
     Args:
         auto: If True (default), apply the IP configuration using sudo and
-              run connectivity checks.  If False, only print commands (dry-run).
+              perform antenna discovery. If False, print the IP command (dry-run).
 
     Returns:
-        True if the IP is set and both network hops are reachable, else False.
+        True if the antenna interface was found and the GCS IP is configured.
     """
     os_name = platform.system()
     print(f"[network_setup] Host OS detected: {os_name}")
@@ -358,9 +316,6 @@ def ensure_gcs_ip(auto: bool = True) -> bool:
         print(f"[network_setup] WARNING: Unsupported OS '{os_name}'.")
         print(f"                Please manually set a static IP of {GCS_IP}/{GCS_PREFIX} on your USB Ethernet adapter.")
         return False
-
-    if ip_ok and auto:
-        verify_network_links()
 
     return ip_ok
 

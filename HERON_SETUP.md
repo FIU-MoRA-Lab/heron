@@ -17,7 +17,7 @@ This guide details the network topology, system configuration (for Linux and mac
 
 ### Linux Setup
 
-Automatic Linux setup scans carrier-up Ethernet interfaces for the MikroTik ground antenna at `192.168.2.11`. It configures an interface only when exactly one interface responds. Install `arping` if needed (for example, `sudo apt install iputils-arping` on Debian or Ubuntu).
+Automatic setup probes every live Ethernet interface for the ground MikroTik at `192.168.2.11` and uses the unique interface that answers at the ARP layer. The antenna may not answer ICMP ping. Linux uses `arping` from `iputils-arping`; macOS uses its built-in `ping` only to populate the interface-scoped ARP cache and checks that cache for the antenna's MAC address. An ICMP echo reply is not required.
 
 If you configure the connection manually, identify the interface connected to the MikroTik and run:
 
@@ -69,11 +69,11 @@ Instead of running the OS-specific commands above manually, the Python scripts
 (`logger.py`, `legacy/controller.py`, and `mission_control.py`) will **automatically detect
 your OS and assign the static IP at startup**.
 
-On both Linux and macOS, automatic setup now probes active Ethernet links for
-the MikroTik ground antenna (`192.168.2.11`) and changes settings only when
-exactly one interface responds. Install `arping` if needed (for example,
-`brew install arping` on macOS). If detection is missing or ambiguous, setup
-stops without changing network settings.
+Automatic setup does not choose by adapter name. It probes each active Ethernet
+interface for the MikroTik bridge, then assigns `192.168.2.1/24` to the unique
+interface whose ARP table learns `192.168.2.11`. On Linux, install
+`iputils-arping` if `arping` is not already available. macOS uses built-in
+network tools and does not require a Homebrew package.
 
 You can also run the setup standalone to verify or pre-configure the interface:
 
@@ -168,24 +168,16 @@ uv run heron-mission
 uv run heron-mission --mission-file src/heron/examples/missions/sample.json
 ```
 
-#### Recent Sentinel-2 imagery
+#### Recent NASA VIIRS imagery
 
-The map can overlay the newest cloud-free Sentinel-2 L2A pixels from the last 30 days over Esri imagery. Esri remains visible where Sentinel-2 has clouds or no valid observation. To enable it, create a Copernicus Data Space OAuth client and set these variables in the shell before launching:
-
-```bash
-export COPERNICUS_CLIENT_ID='your-client-id'
-export COPERNICUS_CLIENT_SECRET='your-client-secret'
-uv run heron-mission
-```
-
-Without both variables, the map uses Esri imagery. Keep the client secret in your environment or a local secret manager; do not commit it to the repository. Sentinel-2 requests use the Copernicus Data Space Processing API, which requires OAuth authentication.
+The map requests the newest available daily VIIRS true-color imagery from NASA's Global Imagery Browse Services (GIBS). It checks today and the previous two dates, needs no API key, and falls back to Esri World Imagery if NASA tiles are unavailable. NASA publishes some near-real-time layers within 3.5 hours of observation. VIIRS imagery is about 250 m per pixel and is stretched at close zoom levels, so it is useful for recent regional context but does not provide fine detail for precise waypoint placement. [NASA GIBS access docs](https://nasa-gibs.github.io/gibs-api-docs/access-basics/) · [NASA GIBS visualization catalog](https://nasa-gibs.github.io/gibs-api-docs/available-visualizations/)
 
 #### Map & Teleop Controls:
 - The default desktop interface uses PySide6 / Qt Quick for a crisp, scalable cross-platform UI.
 - **Click Map**: Drop a new waypoint `(lat, lon)` on the satellite view.
 - **Click & Drag Waypoint**: Move an existing waypoint.
-- **Right-Click Waypoint**: Delete it. Middle-drag or right-drag empty map space to pan.
-- **Scroll / Trackpad Scroll**: Cursor-centered zoom. The map controls also provide zoom and re-center buttons.
+- **Right-Click Waypoint**: Delete it. Drag empty map space with the left, middle, or right button to pan.
+- **Mouse Wheel / Trackpad Scroll / Two-Finger Pinch**: Zoom the map. Click-drag empty map space to pan; dragging a waypoint moves it. The map controls provide zoom and re-center buttons.
 - **Load / Save / Clear / Upload / Start Mission / Arm / Disarm / Manual / Stop**: Use the Mission Control panel.
 - **Manual control**: Use the arrow keys / WASD or a connected gamepad. The manual-input overlay shows the active source and axis values.
 - Run `heron-controller` for the legacy Textual manual-control console and its keyboard controls.
@@ -194,14 +186,14 @@ Without both variables, the map uses Esri imagery. Keep the client secret in you
 
 ## 5. Verification & Troubleshooting
 
-1. **Ping Ground Antenna**:
+1. **Check the ground antenna bridge with ARP** (the bridge may not answer ICMP ping):
    ```bash
-   ping 192.168.2.11
+   sudo arping -I enx207bd2bd7e8f -c 3 192.168.2.11
    ```
 
 2. **Ping Vehicle Companion Computer**:
    ```bash
-   ping 192.168.2.2
+   ping -I enx207bd2bd7e8f 192.168.2.2
    ```
 
 3. **Check Gamepad Device Detection**:

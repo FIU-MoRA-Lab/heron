@@ -81,6 +81,7 @@ class MapCanvas(QQuickPaintedItem):
         self._press = None
         self._drag_wp = -1
         self._pan = False
+        self._pan_candidate = False
         self._last_pos = None
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton | Qt.MouseButton.RightButton | Qt.MouseButton.MiddleButton)
         self.setAcceptHoverEvents(True)
@@ -212,6 +213,9 @@ class MapCanvas(QQuickPaintedItem):
         self._last_pos = self._press
         self._drag_wp = self._nearest_waypoint(*self._press)
         self._pan = event.button() in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton)
+        self._pan_candidate = (
+            event.button() == Qt.MouseButton.LeftButton and self._drag_wp < 0
+        )
         if event.button() == Qt.MouseButton.RightButton and self._drag_wp >= 0:
             self.session.remove_waypoint(self._drag_wp)
             self._press = None
@@ -220,6 +224,10 @@ class MapCanvas(QQuickPaintedItem):
     def mouseMoveEvent(self, event):
         p = event.position()
         x, y = p.x(), p.y()
+        if (self._pan_candidate and self._press
+                and math.hypot(x - self._press[0], y - self._press[1]) > 5):
+            self._pan = True
+            self._pan_candidate = False
         if self._last_pos and self._pan:
             dx, dy = x - self._last_pos[0], y - self._last_pos[1]
             self.viewport.pan_pixels(dx, dy)
@@ -235,7 +243,7 @@ class MapCanvas(QQuickPaintedItem):
             if math.hypot(event.position().x() - x, event.position().y() - y) < 5:
                 self.session.add_waypoint_at(x, y, self.width(), self.height())
         self._press = self._last_pos = None
-        self._drag_wp, self._pan = -1, False
+        self._drag_wp, self._pan, self._pan_candidate = -1, False, False
         self.update()
         event.accept()
 
@@ -341,6 +349,11 @@ class Backend(QObject):
     def armed(self): return self.controller.is_armed
 
     @Property(str, notify=telemetryChanged)
+    def batteryLabel(self):
+        battery_pct = self.controller.battery_pct
+        return f"BATTERY {battery_pct}%" if 0 <= battery_pct <= 100 else "BATTERY --"
+
+    @Property(str, notify=telemetryChanged)
     def telemetryLabel(self):
         c = self.controller
         gps = f"{c.lat:.6f}, {c.lon:.6f}" if c.lat else "Waiting for GPS"
@@ -353,7 +366,13 @@ class Backend(QObject):
         return f"{count} waypoints  ·  {self.controller.satellites} satellites  ·  {self.controller.battery_v:.1f} V"
 
     @Property(bool, notify=telemetryChanged)
-    def missionReady(self): return self.controller.mission_uploaded
+    def missionReady(self):
+        with self.controller._wp_lock:
+            return bool(self.controller.waypoints) and not self.controller.is_starting_mission
+
+    @Property(bool, notify=telemetryChanged)
+    def clearAvailable(self):
+        return not self.controller.is_armed and not self.controller.mission_started
 
     @Property(str, notify=telemetryChanged)
     def statusLabel(self):
@@ -392,9 +411,11 @@ class Backend(QObject):
             mission_count = len(controller.waypoints)
         telemetry_state = (
             controller.connected, controller.is_armed, controller.mission_uploaded,
+            controller.mission_started,
             controller.mode_str, controller.lat, controller.lon,
             controller.groundspeed, controller.heading, mission_count,
-            controller.satellites, controller.battery_v, controller.last_status_msg,
+            controller.satellites, controller.battery_v, controller.battery_pct,
+            controller.last_status_msg,
         )
         if telemetry_state != self._last_telemetry_state:
             self._last_telemetry_state = telemetry_state
@@ -503,6 +524,7 @@ def run_qt(session, tile_engine):
     QQuickStyle.setStyle("Basic")
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Heron Ground Station")
+    app.setDesktopFileName("heron-ground-station")
     qmlRegisterType(MapCanvas, "Heron", 1, 0, "MapCanvas")
     view = QQuickView()
     view.setTitle("Heron · Ground Station")

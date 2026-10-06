@@ -21,31 +21,9 @@ Item {
             anchors.leftMargin: 22
             anchors.rightMargin: 22
             spacing: 14
-            Rectangle { width: 36; height: 36; radius: 10; color: "#303030"; border.color: "#5b5b5b"
-                Canvas {
-                    anchors.fill: parent
-                    anchors.margins: 4
-                    onPaint: {
-                        const ctx = getContext("2d")
-                        ctx.clearRect(0, 0, width, height)
-                        ctx.beginPath()
-                        ctx.moveTo(width * 0.5, height * 0.08)
-                        ctx.lineTo(width * 0.88, height * 0.9)
-                        ctx.lineTo(width * 0.5, height * 0.68)
-                        ctx.lineTo(width * 0.12, height * 0.9)
-                        ctx.closePath()
-                        ctx.fillStyle = "#ffd84a"
-                        ctx.strokeStyle = "#fff2a8"
-                        ctx.lineWidth = 1.2
-                        ctx.fill()
-                        ctx.stroke()
-                    }
-                }
-            }
             ColumnLayout {
                 spacing: 0
-                Text { text: "HERON"; color: "#f2f2f2"; font.pixelSize: 15; font.bold: true; font.letterSpacing: 1.4 }
-                Text { text: "GROUND STATION"; color: "#999999"; font.pixelSize: 9; font.letterSpacing: 1.6 }
+                Text { text: "GROUND STATION"; color: "#f2f2f2"; font.pixelSize: 13; font.bold: true; font.letterSpacing: 1.2 }
             }
             Item { Layout.fillWidth: true }
             Rectangle {
@@ -67,6 +45,19 @@ Item {
                     anchors.centerIn: parent
                     text: heron.armed ? "ARMED" : "DISARMED"
                     color: heron.armed ? "#a8ebbf" : "#efaaaa"
+                    font.pixelSize: 10; font.bold: true; font.letterSpacing: 0.8
+                }
+            }
+            Rectangle { width: 1; height: 26; color: "#414141" }
+            Rectangle {
+                radius: 12
+                color: "#242424"
+                implicitWidth: batteryText.implicitWidth + 22; implicitHeight: 28
+                Text {
+                    id: batteryText
+                    anchors.centerIn: parent
+                    text: heron.batteryLabel
+                    color: "#dedede"
                     font.pixelSize: 10; font.bold: true; font.letterSpacing: 0.8
                 }
             }
@@ -108,16 +99,15 @@ Item {
                         columnSpacing: 8
                         ActionButton { text: "↑  UPLOAD"; tone: "primary"; Layout.fillWidth: true; onClicked: heron.upload() }
                         ActionButton { text: "＋  LOAD"; Layout.fillWidth: true; onClicked: heron.load() }
-                        ActionButton {
-                            text: "▶  START MISSION"
-                            tone: "arm"
+                        HoldSlideButton {
+                            text: "START MISSION"
                             Layout.columnSpan: 2
                             Layout.fillWidth: true
                             enabled: heron.missionReady
-                            onClicked: heron.startMission()
+                            onActivated: heron.startMission()
                         }
                         ActionButton { text: "↓  SAVE"; Layout.fillWidth: true; onClicked: heron.save() }
-                        ActionButton { text: "⌫  CLEAR ROUTE"; Layout.fillWidth: true; onClicked: heron.clear() }
+                        ActionButton { text: "⌫  CLEAR ROUTE"; Layout.fillWidth: true; enabled: heron.clearAvailable; onClicked: heron.clear() }
                     }
                     Rectangle { Layout.fillWidth: true; height: 1; color: "#373737"; Layout.topMargin: 2; Layout.bottomMargin: 1 }
                     Text { text: "VEHICLE"; color: "#a0a0a0"; font.pixelSize: 10; font.bold: true; font.letterSpacing: 1.3 }
@@ -149,7 +139,30 @@ Item {
         id: mapFrame
         anchors { top: header.bottom; left: rail.right; right: parent.right; bottom: footer.top }
         color: "#202020"
-        MapCanvas { id: map; objectName: "mapCanvas"; anchors.fill: parent }
+        MapCanvas {
+            id: map
+            objectName: "mapCanvas"
+            anchors.fill: parent
+            PinchHandler {
+                acceptedDevices: PointerDevice.TouchPad
+                target: null
+                property real zoomStepScale: 1.0
+
+                onActiveChanged: {
+                    if (active) zoomStepScale = 1.0
+                }
+                onActiveScaleChanged: {
+                    if (!active) return
+                    if (activeScale >= zoomStepScale * 1.15) {
+                        heron.zoomIn()
+                        zoomStepScale = activeScale
+                    } else if (activeScale <= zoomStepScale / 1.15) {
+                        heron.zoomOut()
+                        zoomStepScale = activeScale
+                    }
+                }
+            }
+        }
         Rectangle {
             visible: heron.modeLabel === "MANUAL"
             anchors { left: parent.left; bottom: parent.bottom; margins: 16 }
@@ -166,7 +179,7 @@ Item {
             anchors { left: parent.left; top: parent.top; margins: 16 }
             radius: 9; color: "#d0161616"; border.color: "#666666"
             width: mapHint.width + 24; height: 34
-            Text { id: mapHint; anchors.centerIn: parent; text: "CLICK TO ADD   ·   DRAG TO EDIT   ·   RIGHT-CLICK TO REMOVE"; color: "#eeeeee"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 0.7 }
+            Text { id: mapHint; anchors.centerIn: parent; text: "CLICK TO ADD   ·   DRAG MAP TO PAN   ·   PINCH TO ZOOM"; color: "#eeeeee"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 0.7 }
         }
         Column {
             anchors { right: parent.right; top: parent.top; margins: 16 }
@@ -197,13 +210,14 @@ Item {
         implicitHeight: 44
         contentItem: Text {
             text: control.text
-            color: control.tone === "primary" ? "#171717" : "#ffffff"
+            color: !control.enabled ? "#777777" : control.tone === "primary" ? "#171717" : "#ffffff"
             font.pixelSize: 10; font.bold: true; font.letterSpacing: 0.35
             horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
         }
         background: Rectangle {
             radius: 8
             color: {
+                if (!control.enabled) return "#1d1d1d"
                 if (control.down) return control.tone === "arm" ? "#267342" : control.tone === "disarm" ? "#315d87" : control.tone === "stop" ? "#9e3030" : "#4a4a4a"
                 if (control.tone === "primary") return "#e3e3e3"
                 if (control.tone === "arm") return "#185c35"
@@ -212,11 +226,92 @@ Item {
                 return "#242424"
             }
             border.color: {
+                if (!control.enabled) return "#353535"
                 if (control.tone === "primary") return "#ffffff"
                 if (control.tone === "arm") return "#75d39a"
                 if (control.tone === "disarm") return "#91b9e3"
                 if (control.tone === "stop") return "#ff8585"
                 return "#444444"
+            }
+        }
+    }
+    component HoldSlideButton: Item {
+        id: holdSlide
+        property string text: ""
+        property real progress: 0
+        signal activated()
+        implicitHeight: 50
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 9
+            color: holdSlide.enabled ? "#132b1d" : "#292929"
+            border.width: 1
+            border.color: holdSlide.enabled ? "#65d895" : "#454545"
+        }
+        Rectangle {
+            x: 4; y: 4
+            width: Math.max(0, (parent.width - 8) * holdSlide.progress)
+            height: parent.height - 8
+            radius: 8
+            color: "#17643a"
+        }
+        Rectangle {
+            id: slideHandle
+            x: 5 + (holdSlide.width - height - 10) * holdSlide.progress
+            y: 5
+            width: holdSlide.height - 10
+            height: holdSlide.height - 10
+            radius: 8
+            color: holdSlide.enabled ? "#d8ffe5" : "#555555"
+            border.color: holdSlide.enabled ? "#77e59e" : "#666666"
+            Text {
+                anchors.centerIn: parent
+                text: "»"
+                color: "#15512e"
+                font.pixelSize: 23
+                font.bold: true
+            }
+        }
+        Text {
+            anchors.centerIn: parent
+            text: !holdSlide.enabled ? "ADD WAYPOINTS TO START" :
+                  holdSlide.progress > 0.05 ? "KEEP SLIDING TO START" : holdSlide.text + "     HOLD & SLIDE →"
+            color: holdSlide.enabled ? "#f2fff5" : "#888888"
+            font.pixelSize: 11
+            font.bold: true
+            font.letterSpacing: 0.8
+        }
+        MouseArea {
+            anchors.fill: parent
+            enabled: holdSlide.enabled
+            preventStealing: true
+            hoverEnabled: true
+            property bool tracking: false
+            function updateProgress(mouseX) {
+                const startX = slideHandle.width / 2 + 5
+                const endX = holdSlide.width - slideHandle.width / 2 - 5
+                holdSlide.progress = Math.max(0, Math.min(1, (mouseX - startX) / (endX - startX)))
+            }
+            onPressed: function(mouse) {
+                if (mouse.x > slideHandle.width + 10) return
+                tracking = true
+                updateProgress(mouse.x)
+            }
+            onPositionChanged: function(mouse) {
+                if (tracking) updateProgress(mouse.x)
+            }
+            onReleased: function(mouse) {
+                if (!tracking) return
+                updateProgress(mouse.x)
+                const completed = holdSlide.progress >= 0.9
+                tracking = false
+                holdSlide.progress = 0
+                if (completed) holdSlide.activated()
+            }
+            onCanceled: {
+                tracking = false
+                holdSlide.progress = 0
             }
         }
     }

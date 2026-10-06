@@ -13,7 +13,6 @@ Standalone usage (listen-only mode):
     uv run heron-logger --format json --types HEARTBEAT,STATUSTEXT
 """
 
-import sys
 import time
 import json
 import signal
@@ -22,7 +21,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from pymavlink import mavutil
 
-from heron.utils.network_setup import ensure_gcs_ip, mavlink_connection_string, MAVLINK_CONN
+from heron.utils.network_setup import ensure_gcs_ip, mavlink_connection_string
 
 # Default directory for auto-generated session logs
 DEFAULT_LOG_DIR = Path.home() / "heron_logs"

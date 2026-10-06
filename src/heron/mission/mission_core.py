@@ -2,7 +2,6 @@
 import csv
 import json
 import math
-import os
 import queue
 import threading
 import time
@@ -12,11 +11,8 @@ from pathlib import Path
 import requests
 from PIL import Image
 from pymavlink import mavutil
-from heron.utils.logger import HeronLogger, mavlink_to_dict
-from heron.mission.mission_logic import (
-    DEFAULT_ZOOM, TILE_SIZE,
-    latlon_to_tile, tile_to_latlon, haversine_distance,
-)
+from heron.utils.logger import HeronLogger
+from heron.mission.mission_logic import TILE_SIZE
 
 SAMPLE_MISSION_FILE = Path(__file__).resolve().parent.parent / "examples" / "missions" / "sample.json"
 SAVED_MISSION_FILE = Path.cwd() / "mission_saved.json"
@@ -27,53 +23,13 @@ CACHE_DIR = Path.home() / ".cache" / "heron_tiles"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 ESRI_TILE_URL = "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+NASA_GIBS_TILE_URL = (
+    "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/"
+    "VIIRS_SNPP_CorrectedReflectance_TrueColor/default/"
+    "{date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg"
+)
+NASA_GIBS_MAX_ZOOM = 9
 USER_AGENT = "HeronUSV-GCS/1.0"
-CDSE_TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
-CDSE_PROCESS_URL = "https://sh.dataspace.copernicus.eu/process/v1"
-SENTINEL_CLEAR_EVALSCRIPT = """//VERSION=3
-function setup() {
-  return {
-    input: [{ bands: ["B02", "B03", "B04", "SCL", "dataMask"] }],
-    output: { bands: 4, sampleType: "AUTO" },
-    mosaicking: "ORBIT"
-  };
-}
-function evaluatePixel(samples) {
-  // Observations arrive newest first; use the newest clear pixel and fall back
-  // to an older clear observation where clouds cover it.
-  for (let i = 0; i < samples.length; i++) {
-    const s = samples[i];
-    if (!s.dataMask || s.SCL === 0 || s.SCL === 3 ||
-        s.SCL === 8 || s.SCL === 9 || s.SCL === 10) continue;
-    return [Math.min(1, 2.5 * s.B04),
-            Math.min(1, 2.5 * s.B03),
-            Math.min(1, 2.5 * s.B02), 1];
-  }
-  return [0, 0, 0, 0];
-}
-"""
-
-
-def _load_local_credentials():
-    """Load the ignored project-local env file without printing secret values."""
-    candidates = (Path.cwd() / ".env.local", Path(__file__).resolve().parents[3] / ".env.local")
-    for env_path in candidates:
-        try:
-            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                if key.startswith("export "):
-                    key = key.removeprefix("export ").strip()
-                if key not in {"COPERNICUS_CLIENT_ID", "COPERNICUS_CLIENT_SECRET"}:
-                    continue
-                value = value.strip().strip("\"'")
-                if value:
-                    os.environ.setdefault(key, value)
-        except OSError:
-            continue
 
 
 # ---------------------------------------------------------------------------
@@ -84,36 +40,21 @@ class SatelliteMapTiles:
     """Fetches and caches satellite imagery tiles asynchronously in background threads."""
 
     def __init__(self, cache_dir: Path = CACHE_DIR):
-        _load_local_credentials()
         self.cache_dir = cache_dir
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": USER_AGENT})
 
         self._tile_cache: dict[tuple[int, int, int], tuple[Image.Image, float, bool]] = {}
+        self._gibs_cache: dict[tuple[str, int, int, int], Image.Image] = {}
         self._pending_requests: set[tuple[int, int, int]] = set()
-        self._sentinel_queue = queue.Queue()
         self._queue = queue.Queue()
         self._lock = threading.Lock()
-        self.last_fetch_live = False
-        self.last_pull_timestamp: str = "Unknown"
         self.last_error = ""
-        self.last_sentinel_error = ""
-        self.cdse_client_id = os.environ.get("COPERNICUS_CLIENT_ID", "").strip()
-        self.cdse_client_secret = os.environ.get("COPERNICUS_CLIENT_SECRET", "").strip()
-        self.imagery_source_label = (
-            "S2 RECENT CLEAR · ESRI FILL"
-            if self.cdse_client_id and self.cdse_client_secret
-            else "ESRI IMAGERY · COPERNICUS LOGIN NEEDED"
-        )
-        self._token_lock = threading.Lock()
-        self._access_token = None
-        self._token_expires_at = 0.0
+        self.imagery_source_label = "NASA VIIRS 250M · ESRI BACKUP"
 
         # Background worker thread for tile fetching
         self._worker_thread = threading.Thread(target=self._download_worker, daemon=True)
         self._worker_thread.start()
-        self._sentinel_thread = threading.Thread(target=self._sentinel_worker, daemon=True)
-        self._sentinel_thread.start()
 
     def _download_worker(self):
         while True:
@@ -122,13 +63,14 @@ class SatelliteMapTiles:
             except queue.Empty:
                 continue
 
-            tile_file = self.cache_dir / f"z{z}_x{x}_y{y}.jpg"
+            tile_file = self.cache_dir / f"nasa_viirs_z{z}_x{x}_y{y}.jpg"
             tile_image = None
             mtime = time.time()
-            is_live = False
-
-            tile_image = self._fetch_esri_tile(z, x, y)
+            tile_image = self._fetch_viirs_tile(z, x, y)
             is_live = tile_image is not None
+            if tile_image is None:
+                tile_image = self._fetch_esri_tile(z, x, y)
+                is_live = tile_image is not None
 
             if tile_image is not None:
                 self.last_error = ""
@@ -154,9 +96,7 @@ class SatelliteMapTiles:
                     tile_image = None
 
             if tile_image is None:
-                esri_error = self.last_error or "Esri tiles are unavailable."
-                errors = [error for error in (self.last_sentinel_error, esri_error) if error]
-                self.last_error = " ".join(errors) or "No online or cached imagery; check internet access."
+                self.last_error = self.last_error or "NASA GIBS and Esri imagery are unavailable."
                 tile_image = Image.new("RGB", (TILE_SIZE, TILE_SIZE), (22, 28, 38))
                 is_live = False
                 mtime = time.time()
@@ -165,38 +105,47 @@ class SatelliteMapTiles:
                 self._tile_cache[(z, x, y)] = (tile_image, mtime, is_live)
                 self._pending_requests.discard((z, x, y))
 
-            if self.cdse_client_id and self.cdse_client_secret:
-                # Fetch Sentinel separately so its processing latency never
-                # blocks the fast basemap tiles from appearing.
-                self._sentinel_queue.put((z, x, y))
-
             self._queue.task_done()
 
-    def _sentinel_worker(self):
-        while True:
-            try:
-                z, x, y = self._sentinel_queue.get(timeout=1.0)
-            except queue.Empty:
-                continue
-            try:
-                sentinel = self._fetch_sentinel_tile(z, x, y)
-                if sentinel is not None:
-                    self.last_sentinel_error = ""
+    def _fetch_viirs_tile(self, z: int, x: int, y: int):
+        """Fetch the newest available NASA VIIRS tile without credentials."""
+        source_zoom = min(z, NASA_GIBS_MAX_ZOOM)
+        scale = 1 << (z - source_zoom)
+        source_x, source_y = x // scale, y // scale
+        sub_x, sub_y = x % scale, y % scale
+
+        for age_days in range(3):
+            image_date = (datetime.now(timezone.utc).date() - timedelta(days=age_days)).isoformat()
+            key = (image_date, source_zoom, source_x, source_y)
+            with self._lock:
+                source_tile = self._gibs_cache.get(key)
+            if source_tile is None:
+                url = NASA_GIBS_TILE_URL.format(
+                    date=image_date, z=source_zoom, x=source_x, y=source_y,
+                )
+                try:
+                    response = self.session.get(url, timeout=5.0)
+                    if response.status_code != 200 or len(response.content) <= 500:
+                        continue
+                    source_tile = Image.open(BytesIO(response.content)).convert("RGB")
                     with self._lock:
-                        current = self._tile_cache.get((z, x, y))
-                    base = current[0] if current else None
-                    if base is not None:
-                        composite = Image.alpha_composite(base.convert("RGBA"), sentinel).convert("RGB")
-                        tile_file = self.cache_dir / f"z{z}_x{x}_y{y}.jpg"
-                        composite.save(tile_file, format="JPEG", quality=92)
-                        with self._lock:
-                            self._tile_cache[(z, x, y)] = (composite, time.time(), True)
-                else:
-                    self.last_sentinel_error = "Copernicus returned no image."
-            except Exception as exc:
-                self.last_sentinel_error = self._brief_error("Copernicus", exc)
-            finally:
-                self._sentinel_queue.task_done()
+                        self._gibs_cache[key] = source_tile
+                        if len(self._gibs_cache) > 64:
+                            self._gibs_cache.pop(next(iter(self._gibs_cache)))
+                except Exception as exc:
+                    self.last_error = self._brief_error("NASA GIBS", exc)
+                    continue
+
+            if scale > 1:
+                left = sub_x * source_tile.width // scale
+                top = sub_y * source_tile.height // scale
+                right = max(left + 1, (sub_x + 1) * source_tile.width // scale)
+                bottom = max(top + 1, (sub_y + 1) * source_tile.height // scale)
+                source_tile = source_tile.crop((left, top, right, bottom)).resize(
+                    (TILE_SIZE, TILE_SIZE), Image.Resampling.BILINEAR
+                )
+            return source_tile
+        return None
 
     def _fetch_esri_tile(self, z, x, y):
         try:
@@ -214,68 +163,6 @@ class SatelliteMapTiles:
         if isinstance(exc, requests.HTTPError) and exc.response is not None:
             return f"{source} returned HTTP {exc.response.status_code}."
         return f"{source} request failed ({type(exc).__name__})."
-
-    def _get_cdse_token(self, force_refresh=False):
-        with self._token_lock:
-            if (not force_refresh and self._access_token
-                    and time.time() < self._token_expires_at - 60):
-                return self._access_token
-            response = self.session.post(
-                CDSE_TOKEN_URL,
-                data={
-                    "grant_type": "client_credentials",
-                    "client_id": self.cdse_client_id,
-                    "client_secret": self.cdse_client_secret,
-                },
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            token_data = response.json()
-            self._access_token = token_data["access_token"]
-            self._token_expires_at = time.time() + int(token_data.get("expires_in", 300))
-            return self._access_token
-
-    def _fetch_sentinel_tile(self, z, x, y):
-        north, west = tile_to_latlon(x, y, z)
-        south, east = tile_to_latlon(x + 1, y + 1, z)
-        now = datetime.now(timezone.utc)
-        payload = {
-            "input": {
-                "bounds": {
-                    "bbox": [west, south, east, north],
-                    "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"},
-                },
-                "data": [{
-                    "type": "sentinel-2-l2a",
-                    "dataFilter": {
-                        "timeRange": {
-                            "from": (now - timedelta(days=30)).isoformat(),
-                            "to": now.isoformat(),
-                        },
-                        "mosaickingOrder": "mostRecent",
-                    },
-                }],
-            },
-            "output": {
-                "width": TILE_SIZE,
-                "height": TILE_SIZE,
-                "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
-            },
-            "evalscript": SENTINEL_CLEAR_EVALSCRIPT,
-        }
-        for attempt in range(2):
-            token = self._get_cdse_token(force_refresh=bool(attempt))
-            response = self.session.post(
-                CDSE_PROCESS_URL,
-                json=payload,
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=30.0,
-            )
-            if response.status_code == 401 and attempt == 0:
-                continue
-            response.raise_for_status()
-            return Image.open(BytesIO(response.content)).convert("RGBA")
-        return None
 
     def get_tile(self, z: int, x: int, y: int) -> tuple[Image.Image, float, bool]:
         """Non-blocking tile getter. Returns cached tile or placeholder while fetching in background."""
@@ -333,6 +220,7 @@ class MissionController:
         self.is_uploading_mission = False
         self.mission_uploaded = False
         self.is_starting_mission = False
+        self.mission_started = False
         self.simulating_mission = False
         self._sim_thread = None
 
@@ -633,7 +521,7 @@ class MissionController:
         t.start()
 
     def start_mission_async(self):
-        """Start an uploaded mission, or explicitly start offline simulation."""
+        """Upload the current plan if needed, then start it or simulate offline."""
         if self.is_starting_mission:
             self.set_status_msg("[MAVLink] Mission start already in progress...", error=True)
             return
@@ -648,8 +536,11 @@ class MissionController:
                 self.set_status_msg("[MAVLink] No waypoints to start.", error=True)
                 return
             if not self.mission_uploaded:
-                self.set_status_msg("[MAVLink] Upload the current waypoint plan before starting.", error=True)
-                return
+                if self.is_uploading_mission:
+                    self.set_status_msg("[MAVLink] Mission upload is still in progress.", error=True)
+                    return
+                if not self.upload_mission():
+                    return
             if not self.master or not self.connected:
                 self.set_status_msg("[SIM] Starting simulated waypoint mission.", error=False)
                 self.start_simulated_mission(wps)
@@ -661,6 +552,7 @@ class MissionController:
                 self.set_status_msg("[MAVLink] AUTO selected, but vehicle could not be armed.", error=True)
                 return
             self.current_wp_seq = 1
+            self.mission_started = True
             self.set_status_msg("[MAVLink] Mission started: AUTO mode selected and vehicle armed.", error=False)
         finally:
             self.is_starting_mission = False
@@ -804,6 +696,7 @@ class MissionController:
     def start_simulated_mission(self, wps: list[dict]):
         """Spawns background simulation loop to step vehicle through waypoints when disconnected."""
         self.simulating_mission = True
+        self.mission_started = True
         self.is_armed = True
         self.mode_str = "AUTO"
         self.current_wp_seq = 1
@@ -871,6 +764,12 @@ class MissionController:
         self.log(f"[WAYPOINT] Removed WP {index + 1}")
 
     def clear_waypoints(self):
+        if self.is_armed or self.mission_started:
+            self.set_status_msg(
+                "[SAFETY] Clear Route is available only while disarmed and before mission start.",
+                error=True,
+            )
+            return
         with self._wp_lock:
             self.mission_uploaded = False
             self.waypoints.clear()

@@ -12,7 +12,7 @@ except ImportError:
 
 
 class GamepadInputReader(threading.Thread):
-    """Read a gamepad's left stick and publish normalized throttle/yaw axes."""
+    """Read left-stick throttle and right-stick steering from a gamepad."""
 
     def __init__(self, output_queue):
         super().__init__(name="heron-gamepad", daemon=True)
@@ -69,7 +69,7 @@ class GamepadInputReader(threading.Thread):
                         continue
                     if event.code == "ABS_Y":
                         axes["throttle"] = self.normalize_axis(event.state, invert=True)
-                    elif event.code == "ABS_X":
+                    elif event.code == "ABS_RX":
                         axes["yaw"] = self.normalize_axis(event.state)
                     else:
                         continue
