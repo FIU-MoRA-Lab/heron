@@ -17,6 +17,8 @@ Usage (standalone verification):
 import re
 import sys
 import platform
+import pathlib
+import shutil
 import subprocess
 
 # ---------------------------------------------------------------------------
@@ -41,23 +43,45 @@ def _run(cmd: list, check: bool = False, capture: bool = True) -> subprocess.Com
 # ---------------------------------------------------------------------------
 
 def _find_usb_ethernet_linux():
-    """Return the first suitable wired Ethernet interface on Linux."""
+    """Find the unique Ethernet interface that can reach the ground MikroTik.
+
+    Interface names and the number of available NICs are not evidence that an
+    interface is connected to the antenna. Probe the antenna's MAC-level
+    presence on each carrier-up Ethernet interface and fail closed if the
+    result is ambiguous or cannot be established.
+    """
     result = _run(["ip", "-o", "link", "show"])
-    ifaces = []
+    candidates = []
     for line in result.stdout.splitlines():
         parts = line.split(":", 2)
         if len(parts) < 2:
             continue
-        name = parts[1].strip()
-        if name in ("lo",) or name.startswith(("wl", "docker", "br-", "virbr")):
+        name = parts[1].strip().split("@", 1)[0]
+        if name.startswith(("lo", "wl", "docker", "br-", "virbr", "veth", "tun", "tap", "wg")):
             continue
-        ifaces.append(name)
+        # Linux ARP probing is meaningful only on a live Ethernet link.
+        try:
+            iface_type = (pathlib.Path("/sys/class/net") / name / "type").read_text().strip()
+            carrier = (pathlib.Path("/sys/class/net") / name / "carrier").read_text().strip()
+        except (OSError, ValueError):
+            continue
+        if iface_type == "1" and carrier == "1":
+            candidates.append(name)
 
-    # Prefer USB-looking names first (enx*, usb*, eth*)
-    for iface in ifaces:
-        if iface.startswith(("enx", "usb", "eth")):
-            return iface
-    return ifaces[0] if ifaces else None
+    arping = shutil.which("arping")
+    if not arping or not candidates:
+        return None
+
+    responders = []
+    for iface in candidates:
+        try:
+            probe = _run([arping, "-I", iface, "-c", "2", "-w", "3", ANTENNA_GND])
+        except OSError:
+            return None
+        if probe.returncode == 0:
+            responders.append(iface)
+
+    return responders[0] if len(responders) == 1 else None
 
 
 def _iface_is_active(iface: str) -> bool:
@@ -68,13 +92,10 @@ def _iface_is_active(iface: str) -> bool:
 
 def _find_usb_ethernet_macos():
     """
-    Return (interface_id, service_name) for the best USB/Thunderbolt Ethernet
-    adapter on macOS — preferring one with an active physical link.
+    Return the unique active Ethernet service that answers for the MikroTik.
 
-    Strategy:
-      1. Collect all wired (non-Wi-Fi) Ethernet adapters from networksetup.
-      2. Among those, prefer the first one whose link is active (cable plugged in).
-      3. Fall back to the first candidate if none are active yet.
+    Link activity and adapter naming alone cannot distinguish the antenna
+    from another wired network, so never fall back to an unverified adapter.
     """
     result = _run(["networksetup", "-listallhardwareports"])
     lines = result.stdout.splitlines()
@@ -100,13 +121,22 @@ def _find_usb_ethernet_macos():
     if not candidates:
         return None, None
 
-    # Prefer the first adapter that has a live link
-    for dev, service in candidates:
-        if _iface_is_active(dev):
-            return dev, service
+    arping = shutil.which("arping")
+    if not arping:
+        return None, None
 
-    # No active link found — return the first candidate anyway
-    return candidates[0]
+    responders = []
+    for dev, service in candidates:
+        if not _iface_is_active(dev):
+            continue
+        try:
+            probe = _run([arping, "-I", dev, "-c", "2", "-w", "3", ANTENNA_GND])
+        except OSError:
+            return None, None
+        if probe.returncode == 0:
+            responders.append((dev, service))
+
+    return responders[0] if len(responders) == 1 else (None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -157,8 +187,8 @@ def _current_ip_macos(iface: str, service_name: str = None):
 def setup_linux(auto: bool = True) -> bool:
     iface = _find_usb_ethernet_linux()
     if not iface:
-        print("[network_setup] ERROR: No USB/wired Ethernet interface detected on this Linux machine.")
-        print("                Run `ip a` to identify your interface.")
+        print(f"[network_setup] ERROR: Could not identify a unique wired interface responding as the MikroTik antenna ({ANTENNA_GND}).")
+        print("                No network settings were changed. Check the Ethernet cable and install the arping utility.")
         return False
 
     print(f"[network_setup] Linux: detected wired interface → {iface}")
@@ -168,7 +198,6 @@ def setup_linux(auto: bool = True) -> bool:
         return True
 
     cmds = [
-        ["sudo", "ip", "addr", "flush", "dev", iface],
         ["sudo", "ip", "addr", "add", f"{GCS_IP}/{GCS_PREFIX}", "dev", iface],
         ["sudo", "ip", "link", "set", iface, "up"],
     ]
@@ -193,8 +222,9 @@ def setup_linux(auto: bool = True) -> bool:
 def setup_macos(auto: bool = True) -> bool:
     iface, service = _find_usb_ethernet_macos()
     if not iface:
-        print("[network_setup] ERROR: No USB/Thunderbolt Ethernet adapter detected on this macOS machine.")
-        print("                Connect the USB Ethernet adapter and try again, or configure the IP via:")
+        print(f"[network_setup] ERROR: Could not identify a unique Ethernet interface responding as the MikroTik antenna ({ANTENNA_GND}).")
+        print("                No network settings were changed. Check the cable and install arping (for example, `brew install arping`).")
+        print("                You can configure the verified antenna adapter manually via:")
         print("                System Settings > Network > [adapter] > TCP/IP > Manual")
         return False
 

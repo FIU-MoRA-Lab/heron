@@ -17,16 +17,15 @@ This guide details the network topology, system configuration (for Linux and mac
 
 ### Linux Setup
 
-Identify your USB Ethernet interface name using `ip a` (e.g., `enx207bd2bd7e8f` or `eth1`), then run:
+Automatic Linux setup scans carrier-up Ethernet interfaces for the MikroTik ground antenna at `192.168.2.11`. It configures an interface only when exactly one interface responds. Install `arping` if needed (for example, `sudo apt install iputils-arping` on Debian or Ubuntu).
+
+If you configure the connection manually, identify the interface connected to the MikroTik and run:
 
 ```bash
-# 1. Flush existing IP configurations on the adapter
-sudo ip addr flush dev enx207bd2bd7e8f
-
-# 2. Assign static IP 192.168.2.1 with netmask 255.255.255.0 (/24)
+# Assign static IP 192.168.2.1 with netmask 255.255.255.0 (/24)
 sudo ip addr add 192.168.2.1/24 dev enx207bd2bd7e8f
 
-# 3. Bring interface up
+# Bring interface up
 sudo ip link set enx207bd2bd7e8f up
 ```
 
@@ -35,7 +34,7 @@ sudo ip link set enx207bd2bd7e8f up
 ### macOS Setup
 
 #### Option A: Terminal (`ifconfig`)
-Find your network interface name using `ifconfig` (e.g., `en5` or `en7`), then run:
+Only use this on the Ethernet adapter physically connected to the MikroTik antenna. Do not choose an adapter based only on its name or because it is the only active Ethernet link. Find and verify the adapter first, then run:
 
 ```bash
 # 1. Set static IP 192.168.2.1 and subnet mask 255.255.255.0
@@ -69,6 +68,12 @@ sudo networksetup -setmanual "USB 10/100/1000 LAN" 192.168.2.1 255.255.255.0
 Instead of running the OS-specific commands above manually, the Python scripts
 (`logger.py`, `legacy/controller.py`, and `mission_control.py`) will **automatically detect
 your OS and assign the static IP at startup**.
+
+On both Linux and macOS, automatic setup now probes active Ethernet links for
+the MikroTik ground antenna (`192.168.2.11`) and changes settings only when
+exactly one interface responds. Install `arping` if needed (for example,
+`brew install arping` on macOS). If detection is missing or ambiguous, setup
+stops without changing network settings.
 
 You can also run the setup standalone to verify or pre-configure the interface:
 
