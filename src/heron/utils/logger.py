@@ -3,14 +3,14 @@
 Heron MAVLink Logger
 --------------------
 Persistent telemetry logger for Heron USV MAVLink sessions.
-Automatically used by waypoint_teleop and controller_teleop on every run —
+Automatically used by mission_control and legacy/controller.py on every run —
 no flags required.  Each session produces a timestamped JSONL log file in
 ``~/heron_logs/`` unless you specify a custom path.
 
 Standalone usage (listen-only mode):
-    python src/utils/logger.py
-    python src/utils/logger.py --output custom.jsonl
-    python src/utils/logger.py --format json --types HEARTBEAT,STATUSTEXT
+    uv run heron-logger
+    uv run heron-logger --output custom.jsonl
+    uv run heron-logger --format json --types HEARTBEAT,STATUSTEXT
 """
 
 import sys
@@ -22,12 +22,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from pymavlink import mavutil
 
-# Auto-configure the GCS static IP on the USB Ethernet adapter
-try:
-    # pyrefly: ignore [missing-import]
-    from utils.network_setup import ensure_gcs_ip, mavlink_connection_string, MAVLINK_CONN
-except ImportError:
-    from utils.network_setup import ensure_gcs_ip, mavlink_connection_string, MAVLINK_CONN
+from heron.utils.network_setup import ensure_gcs_ip, mavlink_connection_string, MAVLINK_CONN
 
 # Default directory for auto-generated session logs
 DEFAULT_LOG_DIR = Path.home() / "heron_logs"
@@ -262,7 +257,7 @@ def _listen(port, baud, logger):
         master.close()
 
 
-if __name__ == "__main__":
+def main() -> None:
     ap = argparse.ArgumentParser(
         description="Heron MAVLink logger -- streams telemetry to JSONL/JSON."
     )
@@ -308,3 +303,7 @@ if __name__ == "__main__":
 
     with log:
         _listen(port=port, baud=args.baud, logger=log)
+
+
+if __name__ == "__main__":
+    main()

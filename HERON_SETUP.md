@@ -64,24 +64,24 @@ sudo networksetup -setmanual "USB 10/100/1000 LAN" 192.168.2.1 255.255.255.0
 
 ---
 
-### Automatic Setup via Script (`src/utils/network_setup.py`)
+### Automatic Setup via Script (`heron-network-setup`)
 
 Instead of running the OS-specific commands above manually, the Python scripts
-(`logger.py`, `controller_teleop.py`, and `waypoint_teleop.py`) will **automatically detect
+(`logger.py`, `legacy/controller.py`, and `mission_control.py`) will **automatically detect
 your OS and assign the static IP at startup**.
 
 You can also run the setup standalone to verify or pre-configure the interface:
 
 ```bash
 # Auto-detect OS & assign 192.168.2.1/24 (requires sudo password prompt)
-uv run src/utils/network_setup.py
+uv run heron-network-setup
 
 # Dry-run: print commands without executing
-uv run src/utils/network_setup.py --dry-run
+uv run heron-network-setup --dry-run
 ```
 
 > **Note**: The frozen GCS IP is `192.168.2.1`. This is hardcoded in
-> `src/utils/network_setup.py` and used by all scripts automatically.
+> `heron.utils.network_setup` and used by all scripts automatically.
 
 ---
 
@@ -90,9 +90,13 @@ uv run src/utils/network_setup.py --dry-run
 The project uses `uv` for dependency management:
 
 ```bash
-# Install dependencies
-uv add pymavlink pyserial inputs
+# Create/sync the project environment and install Heron as a package
+uv sync
 ```
+
+This installs the `heron` package from `src/` in editable mode and provides the
+`heron-controller`, `heron-mission`, `heron-logger`, and
+`heron-network-setup` commands. Run commands from the project root with `uv run`.
 
 ---
 
@@ -103,7 +107,7 @@ uv add pymavlink pyserial inputs
 > to your USB Ethernet adapter before connecting. A `sudo` password prompt may
 > appear. Use `--no-ip-setup` to skip this if the IP is already configured.
 
-### 4.1 Telemetry Logger (`src/utils/logger.py`)
+### 4.1 Telemetry Logger (`heron-logger`)
 
 Listens for incoming MAVLink telemetry and logs every session to a timestamped
 JSONL file in `~/heron_logs/` automatically. Also prints live output when
@@ -111,34 +115,34 @@ JSONL file in `~/heron_logs/` automatically. Also prints live output when
 
 ```bash
 # Run standalone telemetry logger (auto-configures 192.168.2.1 on USB Ethernet)
-uv run src/utils/logger.py
+uv run heron-logger
 
 # Also print messages to the terminal
-uv run src/utils/logger.py --stdout
+uv run heron-logger --stdout
 
 # Save to a specific file instead of the auto-generated timestamped name
-uv run src/utils/logger.py --output my_log.jsonl
+uv run heron-logger --output my_log.jsonl
 
 # Skip automatic IP setup (IP already configured)
-uv run src/utils/logger.py --no-ip-setup
+uv run heron-logger --no-ip-setup
 ```
 
-> **Note**: `src/mission/controller_teleop.py` and `src/mission/waypoint_teleop.py` both
+> **Note**: `heron-controller` and `heron-mission` both
 > start the logger automatically on every run — no flags needed. Logs land in `~/heron_logs/`.
 
-### 4.2 Logitech Controller Teleoperation (`src/mission/controller_teleop.py`)
+### 4.2 Logitech Controller Teleoperation (`heron-controller`)
 
 Teleoperates the Heron surface vehicle thrusters using a Logitech gamepad / joystick:
 
 ```bash
 # Run controller teleoperation (auto-configures 192.168.2.1 on USB Ethernet at startup)
-uv run src/mission/controller_teleop.py
+uv run heron-controller
 
 # Optional: Specify input device explicitly if multiple joysticks are connected
-uv run src/mission/controller_teleop.py --device /dev/input/event21
+uv run heron-controller --keyboard
 
 # Skip automatic IP setup (IP already configured)
-uv run src/mission/controller_teleop.py --no-ip-setup
+uv run heron-controller --no-ip-setup
 ```
 
 #### Controller Controls Mapping:
@@ -147,36 +151,39 @@ uv run src/mission/controller_teleop.py --no-ip-setup
 - **Button 1 (A / Trigger)**: Toggle ARM / DISARM
 - **Button 2 (B / Thumb)**: Set Vehicle Mode to MANUAL
 
-### 4.3 Satellite Feed & Waypoint Navigation (`src/mission/waypoint_teleop.py`)
+### 4.3 Satellite Map & Mission Control (`heron-mission`)
 
 Interactive Ground Control Station with live satellite imagery map, mouse click waypoint planning, and emergency manual override:
 
 ```bash
 # Launch Satellite Map Ground Control Station
-uv run src/mission/waypoint_teleop.py
+uv run heron-mission
 
 # Launch with pre-loaded waypoints file (JSON or CSV)
-uv run src/mission/waypoint_teleop.py --waypoints src/examples/waypoints/waypoints_sample.json
-
-# Launch with dual Textual TUI dashboard + Satellite Map window
-uv run src/mission/waypoint_teleop.py --tui --waypoints src/examples/waypoints/waypoints_sample.json
+uv run heron-mission --mission-file src/heron/examples/missions/sample.json
 ```
 
+#### Recent Sentinel-2 imagery
+
+The map can overlay the newest cloud-free Sentinel-2 L2A pixels from the last 30 days over Esri imagery. Esri remains visible where Sentinel-2 has clouds or no valid observation. To enable it, create a Copernicus Data Space OAuth client and set these variables in the shell before launching:
+
+```bash
+export COPERNICUS_CLIENT_ID='your-client-id'
+export COPERNICUS_CLIENT_SECRET='your-client-secret'
+uv run heron-mission
+```
+
+Without both variables, the map uses Esri imagery. Keep the client secret in your environment or a local secret manager; do not commit it to the repository. Sentinel-2 requests use the Copernicus Data Space Processing API, which requires OAuth authentication.
+
 #### Map & Teleop Controls:
-- **Click / Tap Map**: Drop new waypoint `(lat, lon)` on satellite view.
-- **Click & Drag Waypoint**: Move existing waypoint position.
-- **Shift + Click / Alt + Click / Right-Click**: Delete waypoint (easy touchpad shortcut!).
-- **Trackpad Pinch / Two-finger Scroll / `+`/`-`**: **Google Maps style cursor-centered zoom** (keeps cursor position anchored while zooming).
-- **On-screen `[+]` / `[-]` & `[🎯 Center]` Buttons**: Quick zoom and re-center controls on map overlay.
-- **Key `V` / `R`**: 📡 **Lock & Re-Center Map on Vehicle Live GPS Feed** (follows vehicle coordinates in real-time).
-- **Key `G`**: 🧪 **Set Test GPS Position** (useful when testing indoors before 3D GPS lock is acquired).
-- **Key `U`**: Upload Waypoint Mission to ArduRover FCU via MAVLink and trigger `AUTO` mode.
-- **Key `L` / `S`**: Load / Save waypoints from/to JSON or CSV files (`lat,lon,alt`).
-- **Key `C`**: Clear all waypoints.
-- **Key `M`**: Set MANUAL mode.
-- **Key `A` / `D`**: ARM / DISARM vehicle.
-- **SPACEBAR**: 🚨 **EMERGENCY STOP** (Instantly aborts auto navigation, sets MANUAL mode, and zeroes thrusters).
-- **Arrow Keys / WASD**: Immediate manual control override.
+- The default desktop interface uses PySide6 / Qt Quick for a crisp, scalable cross-platform UI.
+- **Click Map**: Drop a new waypoint `(lat, lon)` on the satellite view.
+- **Click & Drag Waypoint**: Move an existing waypoint.
+- **Right-Click Waypoint**: Delete it. Middle-drag or right-drag empty map space to pan.
+- **Scroll / Trackpad Scroll**: Cursor-centered zoom. The map controls also provide zoom and re-center buttons.
+- **Load / Save / Clear / Upload / Start Mission / Arm / Disarm / Manual / Stop**: Use the Mission Control panel.
+- **Manual control**: Use the arrow keys / WASD or a connected gamepad. The manual-input overlay shows the active source and axis values.
+- Run `heron-controller` for the legacy Textual manual-control console and its keyboard controls.
 
 ---
 

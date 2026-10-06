@@ -20,21 +20,13 @@ Keyboard controls (always active inside the TUI):
     q / Ctrl-C  Quit
 
 Run:
-    uv run src/mission/controller_teleop.py [--keyboard] [--no-ip-setup]
+    uv run heron-controller [--keyboard] [--no-ip-setup]
 """
 
-import sys
 import time
 import threading
 import argparse
-from pathlib import Path
 from pymavlink import mavutil
-
-# Ensure src/ is on sys.path so internal modules resolve when running via
-# `uv run src/mission/controller_teleop.py` from the project root.
-_SRC = Path(__file__).resolve().parent.parent
-if str(_SRC) not in sys.path:
-    sys.path.insert(0, str(_SRC))
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -43,8 +35,8 @@ from textual.reactive import reactive
 from textual.widgets import Footer, Static, RichLog, Label
 from rich.text import Text
 
-from utils.logger import HeronLogger
-from utils.network_setup import ensure_gcs_ip, mavlink_connection_string
+from heron.utils.logger import HeronLogger
+from heron.utils.network_setup import ensure_gcs_ip, mavlink_connection_string
 
 try:
     import inputs as inputs_lib
@@ -315,10 +307,18 @@ class HeronTUIApp(App):
 
     # Actions ---------------------------------------------------------------
 
-    def action_throttle_up(self)   -> None: self.teleop.throttle = min( 1000, self.teleop.throttle + KB_STEP)
-    def action_throttle_down(self) -> None: self.teleop.throttle = max(-1000, self.teleop.throttle - KB_STEP)
-    def action_yaw_left(self)      -> None: self.teleop.yaw      = max(-1000, self.teleop.yaw      - KB_STEP)
-    def action_yaw_right(self)     -> None: self.teleop.yaw      = min( 1000, self.teleop.yaw      + KB_STEP)
+    @staticmethod
+    def _step_axis(value: int, delta: int) -> int:
+        """Step an axis, snapping to zero instead of skipping past it."""
+        next_value = max(-1000, min(1000, value + delta))
+        if value and next_value and (value < 0) != (next_value < 0):
+            return 0
+        return next_value
+
+    def action_throttle_up(self)   -> None: self.teleop.throttle = self._step_axis(self.teleop.throttle, KB_STEP)
+    def action_throttle_down(self) -> None: self.teleop.throttle = self._step_axis(self.teleop.throttle, -KB_STEP)
+    def action_yaw_left(self)      -> None: self.teleop.yaw      = self._step_axis(self.teleop.yaw, -KB_STEP)
+    def action_yaw_right(self)     -> None: self.teleop.yaw      = self._step_axis(self.teleop.yaw, KB_STEP)
 
     def action_stop(self) -> None:
         self.teleop.emergency_stop()

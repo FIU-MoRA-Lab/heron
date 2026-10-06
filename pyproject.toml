@@ -8,9 +8,27 @@ dependencies = [
     "inputs>=0.5",
     "opencv-python>=5.0.0.93",
     "pillow>=12.3.0",
-    "pygame>=2.6.1",
     "pymavlink>=2.4.50",
+    "pyside6-addons>=6.8",
+    "pyside6-essentials>=6.8",
     "pyserial>=3.5",
     "requests>=2.34.2",
+    "rich>=13.0",
     "textual>=0.80.0",
 ]
+
+[project.scripts]
+heron-controller = "heron.mission.legacy.controller:main"
+heron-mission = "heron.mission.mission_control:main"
+heron-logger = "heron.utils.logger:main"
+heron-network-setup = "heron.utils.network_setup:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+heron = ["examples/missions/*.json", "examples/missions/*.csv", "mission/*.qml"]

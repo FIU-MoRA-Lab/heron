@@ -10,8 +10,8 @@ The frozen ground-control IP is:  192.168.2.1 / 24
 The vehicle companion computer is: 192.168.2.2
 
 Usage (standalone verification):
-    python src/utils/network_setup.py
-    python src/utils/network_setup.py --dry-run
+    uv run heron-network-setup
+    uv run heron-network-setup --dry-run
 """
 
 import re
@@ -344,7 +344,7 @@ def mavlink_connection_string() -> str:
 # Standalone entry point
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Configure static GCS IP for the Heron MAVLink connection.")
@@ -362,3 +362,7 @@ if __name__ == "__main__":
     else:
         print("\n[network_setup] IP configuration failed or skipped.")
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
