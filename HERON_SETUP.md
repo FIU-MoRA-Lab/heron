@@ -99,7 +99,7 @@ The project uses `uv` for dependency management:
 uv sync
 ```
 
-This installs the `heron` package from `src/` in editable mode and provides the
+This installs the `heron` package from `backend/` in editable mode and provides the
 `heron-controller`, `heron-mission`, `heron-logger`, and
 `heron-network-setup` commands. Run commands from the project root with `uv run`.
 
@@ -115,7 +115,7 @@ This installs the `heron` package from `src/` in editable mode and provides the
 ### 4.1 Telemetry Logger (`heron-logger`)
 
 Listens for incoming MAVLink telemetry and logs every session to a timestamped
-JSONL file in `~/heron_logs/` automatically. Also prints live output when
+MCAP file in your Documents folder under `Heron/logs` automatically. Also prints live output when
 `--stdout` is passed.
 
 ```bash
@@ -126,14 +126,14 @@ uv run heron-logger
 uv run heron-logger --stdout
 
 # Save to a specific file instead of the auto-generated timestamped name
-uv run heron-logger --output my_log.jsonl
+uv run heron-logger --output my_log.mcap
 
 # Skip automatic IP setup (IP already configured)
 uv run heron-logger --no-ip-setup
 ```
 
 > **Note**: `heron-controller` and `heron-mission` both
-> start the logger automatically on every run — no flags needed. Logs land in `~/heron_logs/`.
+> start the logger automatically on every run — no flags needed. Desktop and standalone logs land in your Documents folder under `Heron/logs` on Windows, macOS, and Linux. `HERON_LOG_DIR` overrides this location.
 
 ### 4.2 Logitech Controller Teleoperation (`heron-controller`)
 
@@ -165,21 +165,27 @@ Interactive Ground Control Station with live satellite imagery map, mouse click 
 uv run heron-mission
 
 # Launch with pre-loaded waypoints file (JSON or CSV)
-uv run heron-mission --mission-file src/heron/examples/missions/sample.json
+uv run heron-mission --mission-file backend/heron/examples/missions/sample.json
 ```
 
-#### Recent NASA VIIRS imagery
+#### Esri and bundled FIU imagery
 
-The map requests the newest available daily VIIRS true-color imagery from NASA's Global Imagery Browse Services (GIBS). It checks today and the previous two dates, needs no API key, and falls back to Esri World Imagery if NASA tiles are unavailable. NASA publishes some near-real-time layers within 3.5 hours of observation. VIIRS imagery is about 250 m per pixel and is stretched at close zoom levels, so it is useful for recent regional context but does not provide fine detail for precise waypoint placement. [NASA GIBS access docs](https://nasa-gibs.github.io/gibs-api-docs/access-basics/) · [NASA GIBS visualization catalog](https://nasa-gibs.github.io/gibs-api-docs/available-visualizations/)
+The MapLibre map uses Esri World Imagery with the local FIU GeoTIFF imagery
+layered above it. FIU rasters, metadata, and lake/fountain GeoJSON ship in the
+Tauri app. FIU imagery is available offline; Esri tiles are cached as they are
+viewed. Initial uv backend dependency provisioning needs internet access.
+See [desktop/README.md](desktop/README.md) for desktop prerequisites and builds.
+The app's **Configure network** button uses the macOS administrator dialog or
+Linux polkit. Launching through `heron-mission` retains terminal network setup.
 
 #### Map & Teleop Controls:
-- The default desktop interface uses PySide6 / Qt Quick for a crisp, scalable cross-platform UI.
+- The desktop interface uses Tauri, SolidJS, and MapLibre; MAVLink and the 20 Hz manual-control loop remain in Python.
 - **Click Map**: Drop a new waypoint `(lat, lon)` on the satellite view.
 - **Click & Drag Waypoint**: Move an existing waypoint.
 - **Right-Click Waypoint**: Delete it. Drag empty map space with the left, middle, or right button to pan.
 - **Mouse Wheel / Trackpad Scroll / Two-Finger Pinch**: Zoom the map. Click-drag empty map space to pan; dragging a waypoint moves it. The map controls provide zoom and re-center buttons.
-- **Load / Save / Clear / Upload / Start Mission / Arm / Disarm / Manual / Stop**: Use the Mission Control panel.
-- **Manual control**: Use the arrow keys / WASD or a connected gamepad. The manual-input overlay shows the active source and axis values.
+- **Load / Save / Clear / Close Loop / Start Mission / Arm / Disarm / Stop**: Use the Route and Vehicle panels. Start Mission uploads the route automatically.
+- **Manual control**: Turn on **Enable** in Manual input to select MANUAL mode and enable the arrow keys / WASD or a connected gamepad. Turning it off clears input to neutral. The compact read-only indicators show the active source, throttle, and steering values.
 - Run `heron-controller` for the legacy Textual manual-control console and its keyboard controls.
 
 ---

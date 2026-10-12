@@ -11,3 +11,10 @@ wheels/
 
 # Local credentials and machine-specific configuration
 .env.local
+logs/
+
+# Desktop build outputs
+desktop/node_modules/
+desktop/dist/
+desktop/.bundle-resources/
+desktop/src-tauri/target/

@@ -1,0 +1,49 @@
+name: Desktop checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: Python environment
+        run: |
+          python -m pip install uv
+          uv sync --frozen
+      - name: Backend integration tests
+        run: uv run --frozen python -m unittest discover -s backend/tests -v
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt
+      - name: Frontend dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Native build
+        working-directory: desktop
+        run: npm run tauri -- build --no-bundle --ci
+      - name: Rust formatting
+        working-directory: desktop
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check

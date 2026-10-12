@@ -1,0 +1,102 @@
+{
+  "type": "FeatureCollection",
+  "name": "FIU Lake safety areas",
+  "padding_m": 2.0,
+  "units": "meters",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "FIU Lake Shoreline",
+        "role": "shoreline"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -80.3738286,
+              25.7584751,
+              2.0
+            ],
+            [
+              -80.3739332,
+              25.7583742,
+              2.0
+            ],
+            [
+              -80.3739916,
+              25.7582671,
+              2.0
+            ],
+            [
+              -80.3739815,
+              25.7581386,
+              2.0
+            ],
+            [
+              -80.3740212,
+              25.7579939,
+              2.0
+            ],
+            [
+              -80.3739642,
+              25.7578492,
+              2.0
+            ],
+            [
+              -80.3738089,
+              25.75783,
+              2.0
+            ],
+            [
+              -80.3737109,
+              25.757748,
+              2.0
+            ],
+            [
+              -80.3733596,
+              25.757746,
+              2.0
+            ],
+            [
+              -80.3733011,
+              25.7577985,
+              2.0
+            ],
+            [
+              -80.3733076,
+              25.7582067,
+              2.0
+            ],
+            [
+              -80.3734924,
+              25.7584692,
+              2.0
+            ],
+            [
+              -80.3738286,
+              25.7584751,
+              2.0
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Fountain 1 center", "role": "fountain" },
+      "geometry": { "type": "Point", "coordinates": [-80.3738323, 25.7580528, 2.0] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Fountain 2 center", "role": "fountain" },
+      "geometry": { "type": "Point", "coordinates": [-80.3736326, 25.7580554, 2.0] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Fountain 3 center", "role": "fountain" },
+      "geometry": { "type": "Point", "coordinates": [-80.3734512, 25.7580519, 2.0] }
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "synthetic": true,
+  "seed": 20261011,
+  "start_time_utc": "2026-10-11T16:00:00+00:00",
+  "duration_s": 780.1412061917724,
+  "recording_duration_s": 780.27132881,
+  "route_length_m": 624.112964953418,
+  "speed_m_s": 0.8,
+  "rates_hz": {
+    "GLOBAL_POSITION_INT": 5,
+    "GPS_RAW_INT": 5,
+    "ATTITUDE": 10,
+    "HEARTBEAT": 1,
+    "water_quality": 1
+  },
+  "topic_counts": {
+    "/mavlink/GLOBAL_POSITION_INT": 3901,
+    "/mavlink/GPS_RAW_INT": 3901,
+    "/mavlink/ATTITUDE": 7802,
+    "/mavlink/HEARTBEAT": 781,
+    "/sensors/water_quality": 781
+  },
+  "clock_ground_truth": {
+    "sensor_offset_at_start_s": 7.5,
+    "sensor_drift_ppm": 40.0,
+    "delivery_delay_range_s": [
+      0.15,
+      0.35
+    ]
+  },
+  "oxygen_range_mg_l": [
+    3.214,
+    8.548
+  ],
+  "shore_padding_m": 2.0,
+  "route_inset_m": 7,
+  "route_pattern": "zigzag_survey",
+  "sweep_spacing_m": 6.0,
+  "sensor_position": "Not recorded; derive by clock alignment and GPS interpolation",
+  "mcap_timestamps": "log_time and publish_time are receive time; source clocks remain in payload",
+  "minimum_gps_shore_distance_m": 6.611129053277699,
+  "minimum_gps_fountain_distance_m": 5.040241881598291,
+  "mcap_bytes": 994723,
+  "mcap_sha256": "63e0b863859851ed35bd7096c71f3d12833e2e439ef76b4725901b625af5a592",
+  "validation": "CRC, indexed seek, counts, JSON, attachments, safety geometry passed"
+}

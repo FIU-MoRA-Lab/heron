@@ -5,19 +5,23 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "mcap>=1.5,<2",
     "inputs>=0.5",
     "pillow>=12.3.0",
+    "platformdirs>=4.12.3,<5",
     "pymavlink>=2.4.50",
-    "pyside6-addons>=6.8",
     "pyserial>=3.5",
     "requests>=2.34.2",
     "rich>=13.0",
     "textual>=0.80.0",
+    "pygame>=2.6.1",
+    "hid>=1.0.9",
 ]
 
 [project.scripts]
 heron-controller = "heron.mission.legacy.controller:main"
 heron-mission = "heron.mission.mission_control:main"
+heron-backend = "heron.mission.backend:main"
 heron-logger = "heron.utils.logger:main"
 heron-network-setup = "heron.utils.network_setup:main"
 
@@ -26,7 +30,8 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["backend"]
+include = ["heron*"]
 
 [tool.setuptools.package-data]
-heron = ["examples/missions/*.json", "examples/missions/*.csv", "mission/*.qml"]
+heron = ["examples/missions/*.json", "examples/missions/*.csv", "mission/overlays/*.geojson"]
