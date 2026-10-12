@@ -14,7 +14,8 @@ dependencies = [
     "requests>=2.34.2",
     "rich>=13.0",
     "textual>=0.80.0",
-    "pygame>=2.6.1",
+    # pygame-ce keeps the pygame API and ships Python 3.14 macOS wheels.
+    "pygame-ce>=2.5.8,<3",
     "hid>=1.0.9",
 ]
 
